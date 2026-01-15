@@ -1,16 +1,11 @@
 import csv
 import sqlite3
 
-DB_NAME = "mcq.db"
-CSV_FILE = "mcq_upload.csv"
-
-conn = sqlite3.connect(DB_NAME)
+conn = sqlite3.connect("mcq.db")
 cur = conn.cursor()
 
-with open(CSV_FILE, "r", encoding="utf-8") as file:
-    reader = csv.DictReader(file)
-
-    count = 0
+with open("MPPSC_2025_PYQ_GS_Q1_50.csv", "r", encoding="utf-8") as f:
+    reader = csv.DictReader(f)
     for row in reader:
         cur.execute("""
         INSERT INTO mcq
@@ -27,9 +22,8 @@ with open(CSV_FILE, "r", encoding="utf-8") as file:
             row["correct"],
             row["explanation"]
         ))
-        count += 1
 
 conn.commit()
 conn.close()
 
-print(f"✅ {count} MCQs successfully uploaded!")
+print("✅ CSV imported successfully")
