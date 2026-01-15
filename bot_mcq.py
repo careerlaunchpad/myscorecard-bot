@@ -1,6 +1,7 @@
 import sqlite3
 import random
 import datetime
+import os
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -13,7 +14,9 @@ from telegram.ext import (
     ContextTypes
 )
 
-TOKEN = "8438663111:AAEcoEzGY5L2l9l4kSLEASQ8vgRaHE00Bi8"
+
+TOKEN = os.getenv("BOT_TOKEN")
+
 
 # ---------- DATABASE ----------
 conn = sqlite3.connect("mcq.db", check_same_thread=False)
@@ -252,3 +255,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
