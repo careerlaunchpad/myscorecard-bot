@@ -1,3 +1,4 @@
-exam,topic,question,a,b,c,d,correct,explanation
-
+exam,	year,	paper,	topic,	question,	a	,b	,c	,d	,correct	,explanation	,difficulty
 MPPSC,History,संविधान सभा की पहली बैठक कब हुई?,1946,1947,1948,1950,A,9 दिसम्बर 1946
+MPPSC,	2025,	Pre,	History	,देवी अहिल्याबाई होल्कर का जन्म कब हुआ था?	,25 मई 1725,	27 मई 1725	,29 मई 1727	,31 मई 1725,	B	अहिल्याबाई होल्कर का जन्म 27 मई 1725 को हुआ था,	Easy
+
