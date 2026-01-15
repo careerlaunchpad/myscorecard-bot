@@ -166,6 +166,26 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         await send_mcq(q, context)
+# ---------- MY SCORE (USER SCORE HISTORY) ----------
+async def myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    cur.execute(
+        "SELECT exam, topic, score, total, test_date FROM scores "
+        "WHERE user_id=? ORDER BY id DESC LIMIT 5",
+        (user_id,)
+    )
+    rows = cur.fetchall()
+
+    if not rows:
+        await update.message.reply_text("❌ No score history found.")
+        return
+
+    msg = "📊 MyScoreCard – Recent Tests\n\n"
+    for r in rows:
+        msg += f"📘 {r[0]} | {r[1]}\nScore: {r[2]}/{r[3]} | {r[4]}\n\n"
+
+    await update.message.reply_text(msg)
 
 # ---------- LEADERBOARD (EXAM + ACCURACY) ----------
 async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -251,4 +271,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
