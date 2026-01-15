@@ -1,12 +1,7 @@
-import sqlite3
-import random
-import datetime
 import os
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup
-)
+import sqlite3
+import datetime
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -14,9 +9,8 @@ from telegram.ext import (
     ContextTypes
 )
 
-
 TOKEN = os.getenv("BOT_TOKEN")
-
+CHANNEL_ID = "@MyScoreCard_bot"  # 🔁 change this
 
 # ---------- DATABASE ----------
 conn = sqlite3.connect("mcq.db", check_same_thread=False)
@@ -44,151 +38,107 @@ CREATE TABLE IF NOT EXISTS mcq (
     explanation TEXT
 )
 """)
+
+cur.execute("""
+CREATE TABLE IF NOT EXISTS scores (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    exam TEXT,
+    topic TEXT,
+    score INTEGER,
+    total INTEGER,
+    test_date TEXT
+)
+""")
 conn.commit()
 
-# ---------- SAMPLE MCQ ----------
-def insert_sample_mcq():
-    cur.execute("SELECT COUNT(*) FROM mcq")
-    if cur.fetchone()[0] == 0:
-        cur.execute("""
-        INSERT INTO mcq
-        (exam, topic, question, a, b, c, d, correct, explanation)
-        VALUES
-        ('MPPSC','History',
-         'संविधान सभा की पहली बैठक कब हुई?',
-         '1946','1947','1948','1950',
-         'A',
-         'संविधान सभा की पहली बैठक 9 दिसम्बर 1946 को हुई')
-        """)
-        conn.commit()
-
-insert_sample_mcq()
-
 # ---------- HELPERS ----------
-def add_user(user_id: int):
-    cur.execute(
-        "INSERT OR IGNORE INTO users (user_id) VALUES (?)",
-        (user_id,)
-    )
+def add_user(user_id):
+    cur.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
     conn.commit()
 
-def is_paid_user(user_id: int) -> bool:
-    cur.execute(
-        "SELECT is_paid, expiry FROM users WHERE user_id=?",
-        (user_id,)
-    )
+def is_paid(user_id):
+    cur.execute("SELECT is_paid, expiry FROM users WHERE user_id=?", (user_id,))
     row = cur.fetchone()
-    if not row or row[0] == 0 or not row[1]:
+    if not row or row[0] == 0:
         return False
-    expiry = datetime.datetime.strptime(row[1], "%Y-%m-%d")
-    return expiry >= datetime.datetime.now()
+    return datetime.datetime.strptime(row[1], "%Y-%m-%d") >= datetime.datetime.now()
 
-# ---------- COMMANDS ----------
+# ---------- START ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    add_user(user_id)
+    add_user(update.effective_user.id)
 
-    keyboard = [
+    kb = [
         [InlineKeyboardButton("MPPSC", callback_data="exam_MPPSC")],
         [InlineKeyboardButton("UGC NET", callback_data="exam_NET")]
     ]
-
     await update.message.reply_text(
-        "👋 Welcome to MCQ Test Bot\n\nSelect Exam 👇",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        "👋 Welcome to MyScoreCard Bot 🎯\nSelect Exam 👇",
+        reply_markup=InlineKeyboardMarkup(kb)
     )
 
+# ---------- EXAM ----------
 async def exam_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    exam = query.data.split("_")[1]
+    q = update.callback_query
+    await q.answer()
+    exam = q.data.split("_")[1]
     context.user_data["exam"] = exam
 
-    keyboard = [
+    kb = [
         [InlineKeyboardButton("History", callback_data="topic_History")],
         [InlineKeyboardButton("Polity", callback_data="topic_Polity")]
     ]
-
-    await query.edit_message_text(
-        f"📘 Exam Selected: {exam}\n\nChoose Topic 👇",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+    await q.edit_message_text(
+        f"📘 Exam: {exam}\nChoose Topic 👇",
+        reply_markup=InlineKeyboardMarkup(kb)
     )
 
+# ---------- TOPIC ----------
 async def topic_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+    q = update.callback_query
+    await q.answer()
 
-    topic = query.data.split("_")[1]
-    context.user_data.update({
-        "topic": topic,
-        "score": 0,
-        "q_no": 0
-    })
+    context.user_data["topic"] = q.data.split("_")[1]
+    context.user_data["score"] = 0
+    context.user_data["q_no"] = 0
+    context.user_data["limit"] = 10 if is_paid(q.from_user.id) else 3
 
-    paid = is_paid_user(query.from_user.id)
-    context.user_data["limit"] = 10 if paid else 3
+    await send_mcq(q, context)
 
-    await send_mcq(query, context)
-
-async def send_mcq(query, context):
-    exam = context.user_data["exam"]
-    topic = context.user_data["topic"]
-
+# ---------- SEND MCQ ----------
+async def send_mcq(q, context):
     cur.execute(
         "SELECT * FROM mcq WHERE exam=? AND topic=? ORDER BY RANDOM() LIMIT 1",
-        (exam, topic)
+        (context.user_data["exam"], context.user_data["topic"])
     )
     mcq = cur.fetchone()
-
     if not mcq:
-        await query.edit_message_text("❌ No MCQ found.")
+        await q.edit_message_text("❌ No MCQ found.")
         return
 
-    context.user_data["current_answer"] = mcq[8]
-    context.user_data["explanation"] = mcq[9]
+    context.user_data["ans"] = mcq[8]
+    context.user_data["exp"] = mcq[9]
 
-    keyboard = [
-        [
-            InlineKeyboardButton("A", callback_data="ans_A"),
-            InlineKeyboardButton("B", callback_data="ans_B")
-        ],
-        [
-            InlineKeyboardButton("C", callback_data="ans_C"),
-            InlineKeyboardButton("D", callback_data="ans_D")
-        ]
+    kb = [
+        [InlineKeyboardButton("A", callback_data="ans_A"),
+         InlineKeyboardButton("B", callback_data="ans_B")],
+        [InlineKeyboardButton("C", callback_data="ans_C"),
+         InlineKeyboardButton("D", callback_data="ans_D")]
     ]
 
-    text = (
-        f"❓ Q{context.user_data['q_no'] + 1}\n"
-        f"{mcq[3]}\n\n"
-        f"A. {mcq[4]}\n"
-        f"B. {mcq[5]}\n"
-        f"C. {mcq[6]}\n"
-        f"D. {mcq[7]}"
+    await q.edit_message_text(
+        f"❓ Q{context.user_data['q_no']+1}\n{mcq[3]}\n\n"
+        f"A. {mcq[4]}\nB. {mcq[5]}\nC. {mcq[6]}\nD. {mcq[7]}",
+        reply_markup=InlineKeyboardMarkup(kb)
     )
 
-    await query.edit_message_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+# ---------- ANSWER ----------
+async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
 
-async def answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    selected = query.data.split("_")[1]
-    correct = context.user_data["current_answer"]
-    paid = is_paid_user(query.from_user.id)
-
-    if selected == correct:
+    if q.data.split("_")[1] == context.user_data["ans"]:
         context.user_data["score"] += 1
-        msg = "✅ Correct Answer!"
-    else:
-        msg = f"❌ Wrong! Correct Answer: {correct}"
-
-    if paid:
-        msg += f"\n📘 Explanation: {context.user_data['explanation']}"
 
     context.user_data["q_no"] += 1
 
@@ -196,63 +146,107 @@ async def answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         score = context.user_data["score"]
         total = context.user_data["limit"]
 
-        keyboard = [[
-            InlineKeyboardButton("💎 Upgrade Premium", callback_data="upgrade")
-        ]]
+        cur.execute("""
+        INSERT INTO scores (user_id, exam, topic, score, total, test_date)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            q.from_user.id,
+            context.user_data["exam"],
+            context.user_data["topic"],
+            score,
+            total,
+            datetime.date.today().isoformat()
+        ))
+        conn.commit()
 
-        await query.edit_message_text(
-            f"🎯 Test Completed\n\nScore: {score}/{total}\n\n"
-            "🔓 Premium Users get:\n"
-            "✔ 10–50 MCQ/day\n"
-            "✔ Explanation\n"
-            "✔ Mock Tests",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+        acc = round((score / total) * 100, 2)
+
+        await q.edit_message_text(
+            f"🎯 Test Completed\nScore: {score}/{total}\nAccuracy: {acc}%"
         )
     else:
-        await query.edit_message_text(msg)
-        await send_mcq(query, context)
+        await send_mcq(q, context)
 
-async def upgrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+# ---------- LEADERBOARD (EXAM + ACCURACY) ----------
+async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    exam = context.args[0] if context.args else "MPPSC"
 
-    await query.edit_message_text(
-        "💰 Premium Plan\n\n"
-        "₹199 / Month\n\n"
-        "UPI: yourupi@okaxis\n"
-        "Payment ke baad /paid likho"
-    )
+    cur.execute("""
+    SELECT user_id,
+           SUM(score)*100.0/SUM(total) AS accuracy
+    FROM scores
+    WHERE exam=?
+    GROUP BY user_id
+    ORDER BY accuracy DESC
+    LIMIT 10
+    """, (exam,))
+    rows = cur.fetchall()
 
-async def paid(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    expiry = (
-        datetime.datetime.now() + datetime.timedelta(days=30)
-    ).strftime("%Y-%m-%d")
+    msg = f"🏆 {exam} Leaderboard (Accuracy)\n\n"
+    for i, r in enumerate(rows, 1):
+        msg += f"{i}. User {r[0]} → {round(r[1],2)}%\n"
 
-    cur.execute(
-        "UPDATE users SET is_paid=1, expiry=? WHERE user_id=?",
-        (expiry, user_id)
-    )
-    conn.commit()
+    await update.message.reply_text(msg)
 
-    await update.message.reply_text(
-        "✅ Premium Activated for 30 Days 🎉"
-    )
+# ---------- PERFORMANCE TREND ----------
+async def performance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    cur.execute("""
+    SELECT score, total FROM scores
+    WHERE user_id=?
+    ORDER BY id DESC LIMIT 7
+    """, (uid,))
+    rows = cur.fetchall()
+
+    if not rows:
+        await update.message.reply_text("❌ No performance data.")
+        return
+
+    msg = "📈 Performance Trend\n\n"
+    for i, r in enumerate(rows[::-1], 1):
+        bar = "█" * int((r[0]/r[1]) * 10)
+        msg += f"Test {i}: {bar} {r[0]}/{r[1]}\n"
+
+    await update.message.reply_text(msg)
+
+# ---------- DAILY TOPPERS ----------
+async def daily_toppers(context: ContextTypes.DEFAULT_TYPE):
+    today = datetime.date.today().isoformat()
+    cur.execute("""
+    SELECT user_id, SUM(score)*100.0/SUM(total) acc
+    FROM scores WHERE test_date=?
+    GROUP BY user_id
+    ORDER BY acc DESC LIMIT 3
+    """, (today,))
+    rows = cur.fetchall()
+
+    if not rows:
+        return
+
+    msg = "🔥 Daily Toppers – MyScoreCard 🔥\n\n"
+    for i, r in enumerate(rows, 1):
+        msg += f"{i}. User {r[0]} → {round(r[1],2)}%\n"
+
+    await context.bot.send_message(chat_id=CHANNEL_ID, text=msg)
 
 # ---------- MAIN ----------
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("paid", paid))
-    app.add_handler(CallbackQueryHandler(exam_select, pattern="^exam_"))
-    app.add_handler(CallbackQueryHandler(topic_select, pattern="^topic_"))
-    app.add_handler(CallbackQueryHandler(answer_handler, pattern="^ans_"))
-    app.add_handler(CallbackQueryHandler(upgrade, pattern="^upgrade$"))
+    app.add_handler(CommandHandler("leaderboard", leaderboard))
+    app.add_handler(CommandHandler("performance", performance))
+    app.add_handler(CallbackQueryHandler(exam_select, "^exam_"))
+    app.add_handler(CallbackQueryHandler(topic_select, "^topic_"))
+    app.add_handler(CallbackQueryHandler(answer, "^ans_"))
 
-    print("🤖 Bot is running...")
+    app.job_queue.run_daily(
+        daily_toppers,
+        time=datetime.time(hour=21, minute=0)
+    )
+
+    print("🤖 MyScoreCard Bot Running...")
     app.run_polling()
 
 if __name__ == "__main__":
     main()
-
