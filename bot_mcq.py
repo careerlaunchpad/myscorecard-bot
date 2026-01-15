@@ -234,6 +234,7 @@ def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("myscore", myscore))
     app.add_handler(CommandHandler("leaderboard", leaderboard))
     app.add_handler(CommandHandler("performance", performance))
     app.add_handler(CallbackQueryHandler(exam_select, "^exam_"))
@@ -250,3 +251,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
