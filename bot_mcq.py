@@ -146,20 +146,20 @@ async def send_mcq(q, context):
     mcq = cur.fetchone()
 
     if not mcq:
-    # All questions exhausted → auto finish test
-    score = context.user_data["score"]
-    total = context.user_data["q_no"]
-
-    await q.edit_message_text(
-        f"🎯 Test Completed ✅\n\n"
-        f"Score: {score}/{total}\n\n"
-        f"👇 Review your answers",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔍 Review Answers", callback_data="review_0")],
-            [InlineKeyboardButton("📄 Download Result PDF", callback_data="pdf_result")]
-        ])
-    )
-    return
+        # All questions exhausted → auto finish test
+        score = context.user_data["score"]
+        total = context.user_data["q_no"]
+        
+        await q.edit_message_text(
+            f"🎯 Test Completed ✅\n\n"
+            f"Score: {score}/{total}\n\n"
+            f"👇 Review your answers",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔍 Review Answers", callback_data="review_0")],
+                [InlineKeyboardButton("📄 Download Result PDF", callback_data="pdf_result")]
+            ])
+        )
+        return
 
 
     # 🔴 SNAPSHOT SAVE (INSIDE FUNCTION)
@@ -265,23 +265,6 @@ async def review_answers(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg,
         reply_markup=InlineKeyboardMarkup(kb)
     )
-# ---------- WRONG ONLY PRACTICE ----------
-async def wrong_only_practice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-
-    wrongs = context.user_data.get("wrong_questions", [])
-
-    if not wrongs:
-        await q.edit_message_text("🎉 No wrong questions to practice!")
-        return
-
-    # reset counters
-    context.user_data["wrong_mode"] = True
-    context.user_data["wrong_index"] = 0
-    context.user_data["score"] = 0
-
-    await send_wrong_mcq(q, context)
 
 #-----------------------new button--------
 async def start_new_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -389,7 +372,7 @@ def generate_result_pdf(user_id, exam, topic, attempts, score, total):
     c.save()
     return file_name
 
-# ---------- ANSWER ----------
+
 # ---------- ANSWER ----------
 async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -457,14 +440,33 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ❌ WRONG-ONLY MODE CONTINUE
-    if context.user_data.get("wrong_mode"):
-        context.user_data["wrong_index"] += 1
-        await send_wrong_mcq(q, context)
-        return
 
     # ▶️ NORMAL NEXT QUESTION
     await send_mcq(q, context)
+
+#----------Wrong-Only start function-------------
+async def wrong_only_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    wrong_list = context.user_data.get("wrong_questions", [])
+
+    if not wrong_list:
+        await q.edit_message_text("🎉 No wrong questions to practice!")
+        return
+
+    # activate wrong-only mode
+    context.user_data["wrong_mode"] = True
+    context.user_data["wrong_index"] = 0
+
+    await send_wrong_mcq(q, context)
+#---------------wrong_next----------------
+async def wrong_next(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    context.user_data["wrong_index"] += 1
+    await send_wrong_mcq(q, context)
 
 #------------------pdf result --------------
 async def pdf_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -583,7 +585,7 @@ def main():
     app.add_handler(CallbackQueryHandler(go_performance, "^go_performance$"))
     app.add_handler(CallbackQueryHandler(pdf_result, "^pdf_result$"))
     app.add_handler(CallbackQueryHandler(wrong_only_practice, "^wrong_only$"))
-
+    app.add_handler(CallbackQueryHandler(wrong_next, "^wrong_next$"))
     app.add_handler(CommandHandler("leaderboard", leaderboard))
     app.add_handler(CommandHandler("performance", performance))
     app.add_handler(CallbackQueryHandler(exam_select, "^exam_"))
@@ -600,5 +602,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
