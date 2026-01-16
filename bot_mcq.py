@@ -101,7 +101,7 @@ async def topic_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["topic"] = q.data.split("_")[1]
     context.user_data["score"] = 0
     context.user_data["q_no"] = 0
-    context.user_data["limit"] = 10 if is_paid(q.from_user.id) else 3
+    context.user_data["limit"] = 50 if is_paid(q.from_user.id) else 10
 
     await send_mcq(q, context)
 
@@ -271,5 +271,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
