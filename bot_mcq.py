@@ -109,6 +109,7 @@ async def send_mcq(q, context):
     cur.execute(sql, params)
     mcq = cur.fetchone()
 
+    # ✅ FIX: when questions are over
     if not mcq:
         await finish_test(q, context)
         return
@@ -291,3 +292,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
