@@ -8,7 +8,7 @@ from telegram.ext import (
 TOKEN = os.getenv("BOT_TOKEN")
 
 # 🔐 ADMIN IDS (ADD YOUR ID)
-#ADMIN_IDS = [123456789]
+ADMIN_IDS = [1977205811]
 
 # 💰 PRICE CONFIG
 PLAN_PRICE = 199  # per month ₹
@@ -224,3 +224,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
