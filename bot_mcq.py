@@ -187,38 +187,58 @@ async def send_mcq(q, context):
         f"A. {mcq[4]}\nB. {mcq[5]}\nC. {mcq[6]}\nD. {mcq[7]}",
         reply_markup=InlineKeyboardMarkup(kb)
     )
-#--------------
-async def send_wrong_mcq(q, context):
+#--------------wrong_only_start-----------
+async def wrong_only_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    wrongs = context.user_data.get("wrong_questions", [])
+
+    if not wrongs:
+        await q.edit_message_text("🎉 No wrong questions to practice!")
+        return
+
+    context.user_data["wrong_index"] = 0
+    await send_wrong_review(q, context)
+
+#---------send_wrong_review------------
+async def send_wrong_review(q, context):
     idx = context.user_data["wrong_index"]
     wrongs = context.user_data["wrong_questions"]
 
     if idx >= len(wrongs):
         await q.edit_message_text(
-            "✅ Wrong-Only Practice Completed 🎯\n\n"
-            f"Practiced Questions: {len(wrongs)}"
+            "✅ Wrong-Only Practice Completed 🎯",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔁 Start New Test", callback_data="start_new")],
+                [InlineKeyboardButton("📊 My Score", callback_data="go_myscore")]
+            ])
         )
         return
 
     w = wrongs[idx]
 
-    context.user_data["ans"] = w["correct"]
-
-    kb = [
-        [InlineKeyboardButton("A", callback_data="ans_A"),
-         InlineKeyboardButton("B", callback_data="ans_B")],
-        [InlineKeyboardButton("C", callback_data="ans_C"),
-         InlineKeyboardButton("D", callback_data="ans_D")]
-    ]
-
     await q.edit_message_text(
-        f"❌ Wrong Practice Q{idx+1}\n{w['question']}\n\n"
+        f"❌ Wrong Question {idx+1}\n\n"
+        f"{w['question']}\n\n"
         f"A. {w['options']['A']}\n"
         f"B. {w['options']['B']}\n"
         f"C. {w['options']['C']}\n"
-        f"D. {w['options']['D']}",
-        reply_markup=InlineKeyboardMarkup(kb)
+        f"D. {w['options']['D']}\n\n"
+        f"✅ Correct Answer: {w['correct']}\n\n"
+        f"📘 {w['explanation']}",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("Next ▶", callback_data="wrong_next")]
+        ])
     )
 
+#--------------wrong next--------
+async def wrong_next(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    context.user_data["wrong_index"] += 1
+    await send_wrong_review(q, context)
 
 #-----------------------Review -----------
 async def review_answers(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -584,8 +604,9 @@ def main():
     app.add_handler(CallbackQueryHandler(go_myscore, "^go_myscore$"))    
     app.add_handler(CallbackQueryHandler(go_performance, "^go_performance$"))
     app.add_handler(CallbackQueryHandler(pdf_result, "^pdf_result$"))
-    app.add_handler(CallbackQueryHandler(wrong_only_practice, "^wrong_only$"))
     app.add_handler(CallbackQueryHandler(wrong_next, "^wrong_next$"))
+    app.add_handler(CallbackQueryHandler(wrong_only_start, "^wrong_only$"))
+
     app.add_handler(CommandHandler("leaderboard", leaderboard))
     app.add_handler(CommandHandler("performance", performance))
     app.add_handler(CallbackQueryHandler(exam_select, "^exam_"))
@@ -602,6 +623,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
