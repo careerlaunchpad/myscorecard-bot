@@ -1,273 +1,225 @@
-import os
-import sqlite3
-import datetime
-from collections import defaultdict
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+import os, sqlite3, datetime, csv
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Document
 from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    CallbackQueryHandler,
-    ContextTypes
+    ApplicationBuilder, CommandHandler,
+    CallbackQueryHandler, ContextTypes, MessageHandler, filters
 )
 
 TOKEN = os.getenv("BOT_TOKEN")
 
-# ================= DATABASE =================
+# 🔐 ADMIN IDS (ADD YOUR ID)
+#ADMIN_IDS = [123456789]
+
+# 💰 PRICE CONFIG
+PLAN_PRICE = 199  # per month ₹
+
+# ---------- DATABASE ----------
 conn = sqlite3.connect("mcq.db", check_same_thread=False)
 cur = conn.cursor()
 
 cur.execute("""
+CREATE TABLE IF NOT EXISTS users (
+    user_id INTEGER PRIMARY KEY,
+    is_paid INTEGER DEFAULT 0,
+    expiry TEXT
+)
+""")
+
+cur.execute("""
 CREATE TABLE IF NOT EXISTS mcq (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    exam TEXT,
-    topic TEXT,
-    question TEXT,
+    exam TEXT, topic TEXT, question TEXT,
     a TEXT, b TEXT, c TEXT, d TEXT,
-    correct TEXT,
-    explanation TEXT
+    correct TEXT, explanation TEXT
 )
 """)
 
 cur.execute("""
 CREATE TABLE IF NOT EXISTS scores (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    exam TEXT,
-    topic TEXT,
-    score INTEGER,
-    total INTEGER,
-    test_date TEXT
+    user_id INTEGER, exam TEXT, topic TEXT,
+    score INTEGER, total INTEGER, test_date TEXT
 )
 """)
 
-cur.execute("""
-CREATE TABLE IF NOT EXISTS topic_stats (
-    user_id INTEGER,
-    topic TEXT,
-    correct INTEGER,
-    wrong INTEGER,
-    PRIMARY KEY (user_id, topic)
-)
-""")
 conn.commit()
 
-# ================= START =================
+# ---------- HELPERS ----------
+def add_user(uid):
+    cur.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (uid,))
+    conn.commit()
+
+def is_paid(uid):
+    cur.execute("SELECT is_paid, expiry FROM users WHERE user_id=?", (uid,))
+    r = cur.fetchone()
+    if not r or r[0] == 0:
+        return False
+    return datetime.datetime.strptime(r[1], "%Y-%m-%d") >= datetime.datetime.now()
+
+# ---------- START ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.clear()
+    add_user(update.effective_user.id)
+
+    await update.message.reply_text(
+        "👋 Welcome to MyScoreCard Bot\n\n"
+        "🎯 Practice MCQs\n"
+        "💰 Paid users get full access\n\n"
+        "Commands:\n"
+        "/pay – Upgrade Plan\n"
+        "/myscore – Your history"
+    )
+
+# ---------- PAYMENT ----------
+async def pay(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "💰 Paid Plan – ₹199 / month\n\n"
+        "UPI: yourupi@bank\n\n"
+        "Payment करने के बाद admin को msg करें:\n"
+        "Format:\n"
+        "Paid – <your user id>"
+    )
+
+# ---------- ADMIN PANEL ----------
+async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS:
+        return
 
     kb = [
-        [InlineKeyboardButton("🧠 Start Test", callback_data="exam_MPPSC")],
-        [InlineKeyboardButton("📊 Topic Analytics", callback_data="topic_stats")]
+        [InlineKeyboardButton("👥 Users", callback_data="admin_users")],
+        [InlineKeyboardButton("💰 Revenue", callback_data="admin_revenue")],
+        [InlineKeyboardButton("📥 Upload MCQ CSV", callback_data="admin_upload")]
     ]
 
     await update.message.reply_text(
-        "👋 Welcome to MyScoreCard Bot\n\nChoose an option 👇",
+        "📱 Admin Dashboard",
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
-# ================= EXAM =================
-async def exam_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ---------- ADMIN USERS ----------
+async def admin_users(update: Update, context):
     q = update.callback_query
     await q.answer()
 
-    context.user_data.clear()
-    context.user_data["exam"] = "MPPSC"
+    cur.execute("SELECT COUNT(*) FROM users")
+    total = cur.fetchone()[0]
 
-    kb = [
-        [InlineKeyboardButton("History", callback_data="topic_History")],
-        [InlineKeyboardButton("Polity", callback_data="topic_Polity")],
-        [InlineKeyboardButton("🧠 Smart Adaptive Test", callback_data="adaptive")]
-    ]
+    cur.execute("SELECT COUNT(*) FROM users WHERE is_paid=1")
+    paid = cur.fetchone()[0]
 
     await q.edit_message_text(
-        "Select Topic 👇",
-        reply_markup=InlineKeyboardMarkup(kb)
+        f"👥 Users Stats\n\n"
+        f"Total Users: {total}\n"
+        f"Paid Users: {paid}"
     )
 
-# ================= TOPIC =================
-async def topic_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ---------- REVENUE ----------
+async def admin_revenue(update: Update, context):
     q = update.callback_query
     await q.answer()
 
-    context.user_data.update({
-        "topic": q.data.split("_")[1],
-        "score": 0,
-        "q_no": 0,
-        "limit": 10,
-        "asked": [],
-        "attempts": []
-    })
+    cur.execute("SELECT COUNT(*) FROM users WHERE is_paid=1")
+    paid = cur.fetchone()[0]
 
-    await send_mcq(q, context)
+    revenue = paid * PLAN_PRICE
 
-# ================= SEND MCQ =================
-async def send_mcq(q, context):
-    asked = context.user_data["asked"]
+    await q.edit_message_text(
+        f"💰 Revenue Analytics\n\n"
+        f"Active Paid Users: {paid}\n"
+        f"Estimated Revenue: ₹{revenue}"
+    )
 
-    if asked:
-        placeholders = ",".join("?" * len(asked))
-        query = f"""
-        SELECT * FROM mcq
-        WHERE topic=? AND id NOT IN ({placeholders})
-        ORDER BY RANDOM() LIMIT 1
-        """
-        params = [context.user_data["topic"]] + asked
-    else:
-        query = "SELECT * FROM mcq WHERE topic=? ORDER BY RANDOM() LIMIT 1"
-        params = [context.user_data["topic"]]
-
-    cur.execute(query, params)
-    mcq = cur.fetchone()
-
-    if not mcq:
-        await finish_test(q, context)
+# ---------- APPROVE USER ----------
+async def approve(update: Update, context):
+    if update.effective_user.id not in ADMIN_IDS:
         return
 
-    context.user_data["asked"].append(mcq[0])
-    context.user_data["correct"] = mcq[8]
-    context.user_data["question"] = mcq
+    uid = int(context.args[0])
+    days = int(context.args[1])
 
-    kb = [
-        [InlineKeyboardButton("A", callback_data="A"),
-         InlineKeyboardButton("B", callback_data="B")],
-        [InlineKeyboardButton("C", callback_data="C"),
-         InlineKeyboardButton("D", callback_data="D")]
-    ]
+    expiry = (datetime.datetime.now() + datetime.timedelta(days=days)).strftime("%Y-%m-%d")
 
-    await q.edit_message_text(
-        f"Q{context.user_data['q_no']+1}. {mcq[3]}\n\n"
-        f"A. {mcq[4]}\nB. {mcq[5]}\nC. {mcq[6]}\nD. {mcq[7]}",
-        reply_markup=InlineKeyboardMarkup(kb)
-    )
-
-# ================= ANSWER =================
-async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-
-    selected = q.data
-    mcq = context.user_data["question"]
-    topic = mcq[2]
-    uid = q.from_user.id
-
-    correct = selected == mcq[8]
-
-    if correct:
-        context.user_data["score"] += 1
-
-    # topic stats
     cur.execute(
-        "SELECT correct, wrong FROM topic_stats WHERE user_id=? AND topic=?",
-        (uid, topic)
+        "UPDATE users SET is_paid=1, expiry=? WHERE user_id=?",
+        (expiry, uid)
     )
-    row = cur.fetchone()
-
-    if row:
-        c, w = row
-        c += 1 if correct else 0
-        w += 0 if correct else 1
-        cur.execute(
-            "UPDATE topic_stats SET correct=?, wrong=? WHERE user_id=? AND topic=?",
-            (c, w, uid, topic)
-        )
-    else:
-        cur.execute(
-            "INSERT INTO topic_stats VALUES (?,?,?,?)",
-            (uid, topic, 1 if correct else 0, 0 if correct else 1)
-        )
-
     conn.commit()
 
-    context.user_data["q_no"] += 1
+    await update.message.reply_text(f"✅ User {uid} approved till {expiry}")
 
-    if context.user_data["q_no"] >= context.user_data["limit"]:
-        await finish_test(q, context)
+# ---------- REMOVE USER ----------
+async def remove(update: Update, context):
+    if update.effective_user.id not in ADMIN_IDS:
         return
 
-    await send_mcq(q, context)
+    uid = int(context.args[0])
+    cur.execute("UPDATE users SET is_paid=0 WHERE user_id=?", (uid,))
+    conn.commit()
 
-# ================= FINISH =================
-async def finish_test(q, context):
-    score = context.user_data["score"]
-    total = context.user_data["q_no"]
+    await update.message.reply_text(f"❌ User {uid} removed from paid")
 
-    await q.edit_message_text(
-        f"✅ Test Completed\n\nScore: {score}/{total}",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("📊 Topic Analytics", callback_data="topic_stats")],
-            [InlineKeyboardButton("🔁 New Test", callback_data="exam_MPPSC")]
-        ])
+# ---------- CSV UPLOAD ----------
+async def admin_upload(update: Update, context):
+    await update.callback_query.answer()
+    await update.callback_query.edit_message_text(
+        "📥 Upload MCQ CSV file now"
     )
+    context.user_data["await_csv"] = True
 
-# ================= TOPIC ANALYTICS =================
-async def topic_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-
-    uid = q.from_user.id
-    cur.execute(
-        "SELECT topic, correct, wrong FROM topic_stats WHERE user_id=?",
-        (uid,)
-    )
-    rows = cur.fetchall()
-
-    if not rows:
-        await q.edit_message_text("No data available yet.")
+async def handle_csv(update: Update, context):
+    if update.effective_user.id not in ADMIN_IDS:
         return
 
-    msg = "📊 Topic-Wise Performance\n\n"
-    for t, c, w in rows:
-        total = c + w
-        acc = round((c / total) * 100, 2)
-        msg += f"{t} → {acc}% ({c}/{total})\n"
-
-    await q.edit_message_text(msg)
-
-# ================= ADAPTIVE TEST =================
-async def adaptive_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-
-    uid = q.from_user.id
-    cur.execute(
-        "SELECT topic, correct, wrong FROM topic_stats WHERE user_id=?",
-        (uid,)
-    )
-    rows = cur.fetchall()
-
-    if not rows:
-        await q.edit_message_text("Attempt some tests first.")
+    if not context.user_data.get("await_csv"):
         return
 
-    weighted = []
-    for t, c, w in rows:
-        acc = c / max(1, (c + w))
-        weight = 3 if acc < 0.5 else 2 if acc < 0.75 else 1
-        weighted.extend([t] * weight)
+    doc: Document = update.message.document
+    file = await doc.get_file()
+    path = "mcq_upload.csv"
+    await file.download_to_drive(path)
 
-    context.user_data.update({
-        "topic": weighted[0],
-        "score": 0,
-        "q_no": 0,
-        "limit": 10,
-        "asked": [],
-        "attempts": []
-    })
+    count = 0
+    with open(path, newline='', encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for r in reader:
+            cur.execute("""
+            INSERT INTO mcq (exam,topic,question,a,b,c,d,correct,explanation)
+            VALUES (?,?,?,?,?,?,?,?,?)
+            """, (
+                r["exam"], r["topic"], r["question"],
+                r["a"], r["b"], r["c"], r["d"],
+                r["correct"], r["explanation"]
+            ))
+            count += 1
 
-    await send_mcq(q, context)
+    conn.commit()
+    context.user_data["await_csv"] = False
 
-# ================= MAIN =================
+    await update.message.reply_text(f"✅ {count} MCQs uploaded successfully")
+#-----------------myid-----------
+async def myid(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        f"Your ID is: {update.effective_user.id}"
+    )
+
+# ---------- MAIN ----------
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(exam_select, "^exam_"))
-    app.add_handler(CallbackQueryHandler(topic_select, "^topic_"))
-    app.add_handler(CallbackQueryHandler(answer, "^[ABCD]$"))
-    app.add_handler(CallbackQueryHandler(topic_stats, "^topic_stats$"))
-    app.add_handler(CallbackQueryHandler(adaptive_start, "^adaptive$"))
+    app.add_handler(CommandHandler("pay", pay))
+    app.add_handler(CommandHandler("admin", admin))
+    app.add_handler(CommandHandler("approve", approve))
+    app.add_handler(CommandHandler("remove", remove))
 
-    print("🤖 Bot Running with Analytics + Adaptive Test")
+    app.add_handler(CallbackQueryHandler(admin_users, "^admin_users$"))
+    app.add_handler(CallbackQueryHandler(admin_revenue, "^admin_revenue$"))
+    app.add_handler(CallbackQueryHandler(admin_upload, "^admin_upload$"))
+
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_csv))
+    app.add_handler(CommandHandler("myid", myid))
+
+
+    print("🤖 Bot Running with Paid + Upload + Revenue")
     app.run_polling()
 
 if __name__ == "__main__":
