@@ -1,6 +1,8 @@
 import os
 import sqlite3
 import datetime
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -204,6 +206,48 @@ async def review_answers(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     await q.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(kb))
+#----------pdf generator --------------
+def generate_result_pdf(user_id, exam, topic, attempts, score, total):
+    file_name = f"result_{user_id}_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}.pdf"
+    c = canvas.Canvas(file_name, pagesize=A4)
+    width, height = A4
+
+    y = height - 40
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(40, y, "MyScoreCard – Test Result")
+
+    y -= 30
+    c.setFont("Helvetica", 11)
+    c.drawString(40, y, f"Exam: {exam}")
+    y -= 15
+    c.drawString(40, y, f"Topic: {topic}")
+    y -= 15
+    c.drawString(40, y, f"Score: {score}/{total}")
+    y -= 30
+
+    for i, a in enumerate(attempts, 1):
+        if y < 80:
+            c.showPage()
+            y = height - 40
+
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(40, y, f"Q{i}. {a['question']}")
+        y -= 15
+
+        c.setFont("Helvetica", 9)
+        for key, opt in a["options"].items():
+            c.drawString(50, y, f"{key}. {opt}")
+            y -= 12
+
+        c.drawString(50, y, f"Your Answer: {a['selected']}")
+        y -= 12
+        c.drawString(50, y, f"Correct Answer: {a['correct']}")
+        y -= 12
+        c.drawString(50, y, f"Explanation: {a['explanation']}")
+        y -= 20
+
+    c.save()
+    return file_name
 
 # ---------- ANSWER ----------
 async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -252,12 +296,33 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Accuracy: {acc}%\n\n"
             f"👇 Review your answers",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔍 Review Answers", callback_data="review_0")]
+                [InlineKeyboardButton("🔍 Review Answers", callback_data="review_0")],
+                [InlineKeyboardButton("📄 Download Result PDF", callback_data="pdf_result")]
             ])
         )
         return
 
     await send_mcq(q, context)
+#------------------pdf result --------------
+async def pdf_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    file_path = generate_result_pdf(
+        q.from_user.id,
+        context.user_data["exam"],
+        context.user_data["topic"],
+        context.user_data["attempts"],
+        context.user_data["score"],
+        context.user_data["q_no"]
+    )
+    await q.edit_message_text("📄 Your result PDF is ready. Check below ⬇️")
+
+    await context.bot.send_document(
+        chat_id=q.from_user.id,
+        document=open(file_path, "rb"),
+        filename="MyScoreCard_Result.pdf"
+    )
 
 
 # ---------- MY SCORE (USER SCORE HISTORY) ----------
@@ -350,12 +415,14 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("myscore", myscore))
     app.add_handler(CallbackQueryHandler(review_answers, "^review_"))
+    app.add_handler(CallbackQueryHandler(pdf_result, "^pdf_result$"))
     app.add_handler(CommandHandler("leaderboard", leaderboard))
     app.add_handler(CommandHandler("performance", performance))
     app.add_handler(CallbackQueryHandler(exam_select, "^exam_"))
     app.add_handler(CallbackQueryHandler(topic_select, "^topic_"))
     app.add_handler(CallbackQueryHandler(answer, "^ans_"))
 
+    if app.job_queue:
     app.job_queue.run_daily(
         daily_toppers,
         time=datetime.time(hour=21, minute=0)
@@ -366,6 +433,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
