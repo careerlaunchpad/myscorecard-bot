@@ -103,6 +103,15 @@ async def topic_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["q_no"] = 0
     context.user_data["limit"] = 50 if is_paid(q.from_user.id) else 10
     context.user_data["asked_questions"] = []
+    cur.execute(
+        "SELECT COUNT(*) FROM mcq WHERE exam=? AND topic=?",
+        (context.user_data["exam"], context.user_data["topic"])
+    )
+    total_q = cur.fetchone()[0]
+
+    context.user_data["limit"] = min(
+        context.user_data["limit"], total_q
+    )
 
     await send_mcq(q, context)
 
@@ -335,6 +344,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
