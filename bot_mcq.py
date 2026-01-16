@@ -422,17 +422,17 @@ def main():
     app.add_handler(CallbackQueryHandler(topic_select, "^topic_"))
     app.add_handler(CallbackQueryHandler(answer, "^ans_"))
 
-if app.job_queue:
-    app.job_queue.run_daily(
-        daily_toppers,
+    if app.job_queue:
+        app.job_queue.run_daily(daily_toppers,
         time=datetime.time(hour=21, minute=0)
-    )
+                               )
 
     print("🤖 MyScoreCard Bot Running...")
     app.run_polling()
 
 if __name__ == "__main__":
     main()
+
 
 
 
