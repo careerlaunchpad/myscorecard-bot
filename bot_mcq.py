@@ -11,10 +11,11 @@ from telegram.ext import (
     ContextTypes
 )
 
+# ================= CONFIG =================
 TOKEN = os.getenv("BOT_TOKEN")
-CHANNEL_ID = "@MyScoreCard_bot"
+CHANNEL_ID = "@MyScoreCard_bot"   # optional
 
-# ---------- DATABASE ----------
+# ================= DATABASE =================
 conn = sqlite3.connect("mcq.db", check_same_thread=False)
 cur = conn.cursor()
 
@@ -54,7 +55,7 @@ CREATE TABLE IF NOT EXISTS scores (
 """)
 conn.commit()
 
-# ---------- HELPERS ----------
+# ================= HELPERS =================
 def add_user(user_id):
     cur.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
     conn.commit()
@@ -66,20 +67,23 @@ def is_paid(user_id):
         return False
     return datetime.datetime.strptime(row[1], "%Y-%m-%d") >= datetime.datetime.now()
 
-# ---------- START ----------
+# ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     add_user(update.effective_user.id)
+
+    context.user_data.clear()
 
     kb = [
         [InlineKeyboardButton("MPPSC", callback_data="exam_MPPSC")],
         [InlineKeyboardButton("UGC NET", callback_data="exam_NET")]
     ]
+
     await update.message.reply_text(
-        "👋 Welcome to MyScoreCard Bot 🎯\nSelect Exam 👇",
+        "👋 Welcome to MyScoreCard Bot 🎯\n\nSelect Exam 👇",
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
-# ---------- EXAM ----------
+# ================= EXAM =================
 async def exam_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -91,34 +95,37 @@ async def exam_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("History", callback_data="topic_History")],
         [InlineKeyboardButton("Polity", callback_data="topic_Polity")]
     ]
+
     await q.edit_message_text(
-        f"📘 Exam: {context.user_data['exam']}\nChoose Topic 👇",
+        f"📘 Exam: {context.user_data['exam']}\n\nChoose Topic 👇",
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
-# ---------- TOPIC ----------
+# ================= TOPIC =================
 async def topic_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
-    context.user_data["topic"] = q.data.split("_")[1]
-    context.user_data["score"] = 0
-    context.user_data["q_no"] = 0
-    context.user_data["asked_questions"] = []
-    context.user_data["attempts"] = []
-    context.user_data["wrong_questions"] = []
+    context.user_data.update({
+        "topic": q.data.split("_")[1],
+        "score": 0,
+        "q_no": 0,
+        "asked_questions": [],
+        "attempts": [],
+        "wrong_questions": [],
+        "limit": 50 if is_paid(q.from_user.id) else 10
+    })
 
-    limit = 50 if is_paid(q.from_user.id) else 10
     cur.execute(
         "SELECT COUNT(*) FROM mcq WHERE exam=? AND topic=?",
         (context.user_data["exam"], context.user_data["topic"])
     )
     total_q = cur.fetchone()[0]
-    context.user_data["limit"] = min(limit, total_q)
+    context.user_data["limit"] = min(context.user_data["limit"], total_q)
 
     await send_mcq(q, context)
 
-# ---------- SEND MCQ ----------
+# ================= SEND MCQ =================
 async def send_mcq(q, context):
     asked = context.user_data["asked_questions"]
 
@@ -146,16 +153,14 @@ async def send_mcq(q, context):
         await finish_test(q, context)
         return
 
+    context.user_data.update({
+        "last_question": mcq[3],
+        "last_options": {"A": mcq[4], "B": mcq[5], "C": mcq[6], "D": mcq[7]},
+        "ans": mcq[8],
+        "exp": mcq[9]
+    })
+
     context.user_data["asked_questions"].append(mcq[0])
-    context.user_data["last_question"] = mcq[3]
-    context.user_data["last_options"] = {
-        "A": mcq[4],
-        "B": mcq[5],
-        "C": mcq[6],
-        "D": mcq[7]
-    }
-    context.user_data["ans"] = mcq[8]
-    context.user_data["exp"] = mcq[9]
 
     kb = [
         [InlineKeyboardButton("A", callback_data="ans_A"),
@@ -165,12 +170,12 @@ async def send_mcq(q, context):
     ]
 
     await q.edit_message_text(
-        f"❓ Q{context.user_data['q_no']+1}\n{mcq[3]}\n\n"
+        f"❓ Q{context.user_data['q_no'] + 1}\n{mcq[3]}\n\n"
         f"A. {mcq[4]}\nB. {mcq[5]}\nC. {mcq[6]}\nD. {mcq[7]}",
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
-# ---------- ANSWER ----------
+# ================= ANSWER =================
 async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -203,13 +208,13 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await send_mcq(q, context)
 
-# ---------- FINISH TEST ----------
+# ================= FINISH TEST =================
 async def finish_test(q, context):
     score = context.user_data["score"]
     total = context.user_data["q_no"]
 
     cur.execute(
-        "INSERT INTO scores (user_id, exam, topic, score, total, test_date) "
+        "INSERT INTO scores (user_id, exam, topic, score, total, test_date)"
         "VALUES (?, ?, ?, ?, ?, ?)",
         (
             q.from_user.id,
@@ -226,17 +231,17 @@ async def finish_test(q, context):
 
     await q.edit_message_text(
         f"🎯 Test Completed ✅\n\n"
-        f"Score: {score}/{total}\n"
-        f"Accuracy: {acc}%\n\n"
-        f"👇 Choose option",
+        f"Score: {score}/{total}\nAccuracy: {acc}%\n\n"
+        f"What would you like to do next?",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("🔍 Review Answers", callback_data="review_0")],
             [InlineKeyboardButton("❌ Practice Wrong Only", callback_data="wrong_only")],
-            [InlineKeyboardButton("📄 Download Result PDF", callback_data="pdf_result")]
+            [InlineKeyboardButton("🔁 Start New Test", callback_data="start_new")],
+            [InlineKeyboardButton("📊 My Score", callback_data="go_myscore")]
         ])
     )
 
-# ---------- WRONG ONLY REVIEW ----------
+# ================= WRONG ONLY =================
 async def wrong_only_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -265,7 +270,7 @@ async def send_wrong_review(q, context):
     w = wrongs[idx]
 
     await q.edit_message_text(
-        f"❌ Wrong Question {idx+1}\n\n"
+        f"❌ Wrong Question {idx + 1}\n\n"
         f"{w['question']}\n\n"
         f"A. {w['options']['A']}\n"
         f"B. {w['options']['B']}\n"
@@ -281,10 +286,11 @@ async def send_wrong_review(q, context):
 async def wrong_next(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
+
     context.user_data["wrong_index"] += 1
     await send_wrong_review(q, context)
 
-# ---------- REVIEW ANSWERS ----------
+# ================= REVIEW =================
 async def review_answers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -305,76 +311,76 @@ async def review_answers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     a = attempts[idx]
 
     await q.edit_message_text(
-        f"❓ Q{idx+1}\n{a['question']}\n\n"
+        f"❓ Q{idx + 1}\n{a['question']}\n\n"
         f"A. {a['options']['A']}\n"
         f"B. {a['options']['B']}\n"
         f"C. {a['options']['C']}\n"
         f"D. {a['options']['D']}\n\n"
-        f"🧑 Your Answer: {a['selected']}\n"
-        f"✅ Correct: {a['correct']}\n\n"
-        f"📘 {a['explanation']}",
+        f"Your Answer: {a['selected']}\n"
+        f"Correct Answer: {a['correct']}\n\n"
+        f"{a['explanation']}",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("Next ▶", callback_data=f"review_{idx+1}")]
+            [InlineKeyboardButton("Next ▶", callback_data=f"review_{idx + 1}")]
         ])
     )
 
-# ---------- PDF ----------
-def generate_result_pdf(user_id, exam, topic, attempts, score, total):
-    filename = f"result_{user_id}.pdf"
-    c = canvas.Canvas(filename, pagesize=A4)
-    y = 800
-
-    c.drawString(40, y, f"Exam: {exam} | Topic: {topic}")
-    y -= 30
-    c.drawString(40, y, f"Score: {score}/{total}")
-    y -= 40
-
-    for i, a in enumerate(attempts, 1):
-        if y < 100:
-            c.showPage()
-            y = 800
-        c.drawString(40, y, f"Q{i}. {a['question']}")
-        y -= 15
-        c.drawString(40, y, f"Correct: {a['correct']}")
-        y -= 25
-
-    c.save()
-    return filename
-
-async def pdf_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ================= MY SCORE =================
+async def go_myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
-    file = generate_result_pdf(
-        q.from_user.id,
-        context.user_data["exam"],
-        context.user_data["topic"],
-        context.user_data["attempts"],
-        context.user_data["score"],
-        context.user_data["q_no"]
+    cur.execute(
+        "SELECT exam, topic, score, total, test_date FROM scores "
+        "WHERE user_id=? ORDER BY id DESC LIMIT 5",
+        (q.from_user.id,)
+    )
+    rows = cur.fetchall()
+
+    if not rows:
+        await q.edit_message_text("❌ No score history found.")
+        return
+
+    msg = "📊 MyScoreCard – Recent Tests\n\n"
+    for r in rows:
+        msg += f"{r[0]} | {r[1]}\nScore: {r[2]}/{r[3]} | {r[4]}\n\n"
+
+    await q.edit_message_text(
+        msg,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔁 Start New Test", callback_data="start_new")]
+        ])
     )
 
-    await context.bot.send_document(chat_id=q.from_user.id, document=open(file, "rb"))
-
-# ---------- START NEW ----------
+# ================= START NEW =================
 async def start_new_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.clear()
-    await start(update, context)
+    q = update.callback_query
+    await q.answer()
 
-# ---------- MAIN ----------
+    context.user_data.clear()
+
+    kb = [
+        [InlineKeyboardButton("MPPSC", callback_data="exam_MPPSC")],
+        [InlineKeyboardButton("UGC NET", callback_data="exam_NET")]
+    ]
+
+    await q.edit_message_text(
+        "🔁 New Test Started\n\nSelect Exam 👇",
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
+
+# ================= MAIN =================
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("myscore", start))
+    app.add_handler(CallbackQueryHandler(start_new_test, "^start_new$"))
+    app.add_handler(CallbackQueryHandler(go_myscore, "^go_myscore$"))
+    app.add_handler(CallbackQueryHandler(wrong_only_start, "^wrong_only$"))
+    app.add_handler(CallbackQueryHandler(wrong_next, "^wrong_next$"))
+    app.add_handler(CallbackQueryHandler(review_answers, "^review_"))
     app.add_handler(CallbackQueryHandler(exam_select, "^exam_"))
     app.add_handler(CallbackQueryHandler(topic_select, "^topic_"))
     app.add_handler(CallbackQueryHandler(answer, "^ans_"))
-    app.add_handler(CallbackQueryHandler(review_answers, "^review_"))
-    app.add_handler(CallbackQueryHandler(wrong_only_start, "^wrong_only$"))
-    app.add_handler(CallbackQueryHandler(wrong_next, "^wrong_next$"))
-    app.add_handler(CallbackQueryHandler(start_new_test, "^start_new$"))
-    app.add_handler(CallbackQueryHandler(pdf_result, "^pdf_result$"))
 
     print("🤖 MyScoreCard Bot Running...")
     app.run_polling()
