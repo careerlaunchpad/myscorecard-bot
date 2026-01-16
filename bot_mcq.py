@@ -183,8 +183,17 @@ async def review_answers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     attempts = context.user_data.get("attempts", [])
 
     if idx >= len(attempts):
-        await q.edit_message_text("✅ Review completed.")
-        return
+    await q.edit_message_text(
+        "✅ Review Completed 🎉\n\n"
+        "What would you like to do next?",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔁 Start New Test", callback_data="start_new")],
+            [InlineKeyboardButton("📊 My Score", callback_data="go_myscore")],
+            [InlineKeyboardButton("📈 Performance", callback_data="go_performance")]
+        ])
+    )
+    return
+
 
     a = attempts[idx]
 
@@ -206,6 +215,22 @@ async def review_answers(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     await q.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(kb))
+#-------------new button------
+async def start_new_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    await start(q, context)
+
+async def go_myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    await myscore(q, context)
+
+async def go_performance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    await performance(q, context)
+
 #----------pdf generator --------------
 def generate_result_pdf(user_id, exam, topic, attempts, score, total):
     file_name = f"result_{user_id}_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}.pdf"
@@ -415,6 +440,9 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("myscore", myscore))
     app.add_handler(CallbackQueryHandler(review_answers, "^review_"))
+    app.add_handler(CallbackQueryHandler(start_new_test, "^start_new$"))
+    app.add_handler(CallbackQueryHandler(go_myscore, "^go_myscore$"))
+    app.add_handler(CallbackQueryHandler(go_performance, "^go_performance$"))
     app.add_handler(CallbackQueryHandler(pdf_result, "^pdf_result$"))
     app.add_handler(CommandHandler("leaderboard", leaderboard))
     app.add_handler(CommandHandler("performance", performance))
@@ -432,6 +460,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
