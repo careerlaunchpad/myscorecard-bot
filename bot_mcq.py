@@ -146,7 +146,21 @@ async def send_mcq(q, context):
     mcq = cur.fetchone()
 
     if not mcq:
-        return
+    # All questions exhausted → auto finish test
+    score = context.user_data["score"]
+    total = context.user_data["q_no"]
+
+    await q.edit_message_text(
+        f"🎯 Test Completed ✅\n\n"
+        f"Score: {score}/{total}\n\n"
+        f"👇 Review your answers",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔍 Review Answers", callback_data="review_0")],
+            [InlineKeyboardButton("📄 Download Result PDF", callback_data="pdf_result")]
+        ])
+    )
+    return
+
 
     # 🔴 SNAPSHOT SAVE (INSIDE FUNCTION)
     context.user_data["last_question"] = mcq[3]
@@ -173,6 +187,38 @@ async def send_mcq(q, context):
         f"A. {mcq[4]}\nB. {mcq[5]}\nC. {mcq[6]}\nD. {mcq[7]}",
         reply_markup=InlineKeyboardMarkup(kb)
     )
+#--------------
+async def send_wrong_mcq(q, context):
+    idx = context.user_data["wrong_index"]
+    wrongs = context.user_data["wrong_questions"]
+
+    if idx >= len(wrongs):
+        await q.edit_message_text(
+            "✅ Wrong-Only Practice Completed 🎯\n\n"
+            f"Practiced Questions: {len(wrongs)}"
+        )
+        return
+
+    w = wrongs[idx]
+
+    context.user_data["ans"] = w["correct"]
+
+    kb = [
+        [InlineKeyboardButton("A", callback_data="ans_A"),
+         InlineKeyboardButton("B", callback_data="ans_B")],
+        [InlineKeyboardButton("C", callback_data="ans_C"),
+         InlineKeyboardButton("D", callback_data="ans_D")]
+    ]
+
+    await q.edit_message_text(
+        f"❌ Wrong Practice Q{idx+1}\n{w['question']}\n\n"
+        f"A. {w['options']['A']}\n"
+        f"B. {w['options']['B']}\n"
+        f"C. {w['options']['C']}\n"
+        f"D. {w['options']['D']}",
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
+
 
 #-----------------------Review -----------
 async def review_answers(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -219,6 +265,24 @@ async def review_answers(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg,
         reply_markup=InlineKeyboardMarkup(kb)
     )
+# ---------- WRONG ONLY PRACTICE ----------
+async def wrong_only_practice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    wrongs = context.user_data.get("wrong_questions", [])
+
+    if not wrongs:
+        await q.edit_message_text("🎉 No wrong questions to practice!")
+        return
+
+    # reset counters
+    context.user_data["wrong_mode"] = True
+    context.user_data["wrong_index"] = 0
+    context.user_data["score"] = 0
+
+    await send_wrong_mcq(q, context)
+
 #-----------------------new button--------
 async def start_new_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -332,6 +396,9 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     selected = q.data.split("_")[1]
 
+    # ❌ wrong-only practice list (safe init)
+    context.user_data.setdefault("wrong_questions", [])
+
     # 🔴 SAVE USER ATTEMPT (INSIDE FUNCTION)
     context.user_data["attempts"].append({
         "question": context.user_data["last_question"],
@@ -343,6 +410,14 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if selected == context.user_data["ans"]:
         context.user_data["score"] += 1
+    else:
+        # ❌ save wrong question for practice
+        context.user_data["wrong_questions"].append({
+        "question": context.user_data["last_question"],
+        "options": context.user_data["last_options"],
+        "correct": context.user_data["ans"],
+        "explanation": context.user_data["exp"]
+        })
 
     context.user_data["q_no"] += 1
 
@@ -373,10 +448,18 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"👇 Review your answers",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔍 Review Answers", callback_data="review_0")],
+                [InlineKeyboardButton("❌ Practice Wrong Only", callback_data="wrong_only")],
                 [InlineKeyboardButton("📄 Download Result PDF", callback_data="pdf_result")]
             ])
         )
         return
+        
+    # ❌ wrong-only mode
+if context.user_data.get("wrong_mode"):
+    context.user_data["wrong_index"] += 1
+    await send_wrong_mcq(q, context)
+    return
+
 
     await send_mcq(q, context)
 #------------------pdf result --------------
@@ -495,6 +578,8 @@ def main():
     app.add_handler(CallbackQueryHandler(go_myscore, "^go_myscore$"))    
     app.add_handler(CallbackQueryHandler(go_performance, "^go_performance$"))
     app.add_handler(CallbackQueryHandler(pdf_result, "^pdf_result$"))
+    app.add_handler(CallbackQueryHandler(wrong_only_practice, "^wrong_only$"))
+
     app.add_handler(CommandHandler("leaderboard", leaderboard))
     app.add_handler(CommandHandler("performance", performance))
     app.add_handler(CallbackQueryHandler(exam_select, "^exam_"))
@@ -511,3 +596,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
