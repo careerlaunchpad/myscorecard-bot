@@ -182,18 +182,20 @@ async def review_answers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     idx = int(q.data.split("_")[1])
     attempts = context.user_data.get("attempts", [])
 
+    # 🔚 REVIEW FINISHED
     if idx >= len(attempts):
-        await q.edit_message_text("✅ Review Completed 🎉\n\n"
-        "What would you like to do next?",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔁 Start New Test", callback_data="start_new")],
-            [InlineKeyboardButton("📊 My Score", callback_data="go_myscore")],
-            [InlineKeyboardButton("📈 Performance", callback_data="go_performance")]
-        ])
-    )
-    return
+        await q.edit_message_text(
+            "✅ Review Completed 🎉\n\n"
+            "What would you like to do next?",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔁 Start New Test", callback_data="start_new")],
+                [InlineKeyboardButton("📊 My Score", callback_data="go_myscore")],
+                [InlineKeyboardButton("📈 Performance", callback_data="go_performance")]
+            ])
+        )
+        return   # ✅ return INSIDE if block
 
-
+    # 🔍 SHOW QUESTION REVIEW
     a = attempts[idx]
 
     msg = (
@@ -213,7 +215,11 @@ async def review_answers(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("Next ▶", callback_data=f"review_{idx+1}")]
         )
 
-    await q.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(kb))
+    await q.edit_message_text(
+        msg,
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
+
 #-------------new button------
 async def start_new_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -459,6 +465,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
