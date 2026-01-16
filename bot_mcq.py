@@ -219,22 +219,68 @@ async def review_answers(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg,
         reply_markup=InlineKeyboardMarkup(kb)
     )
-
-#-------------new button------
+#-----------------------new button--------
 async def start_new_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
-    await start(q, context)
 
-async def go_myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    kb = [
+        [InlineKeyboardButton("MPPSC", callback_data="exam_MPPSC")],
+        [InlineKeyboardButton("UGC NET", callback_data="exam_NET")]
+    ]
+
+    await q.edit_message_text(
+        "🔁 Start New Test\n\nSelect Exam 👇",
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
+#---------------go_myscore-------------------
+    async def go_myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
-    await myscore(q, context)
 
+    user_id = q.from_user.id
+    cur.execute(
+        "SELECT exam, topic, score, total, test_date FROM scores "
+        "WHERE user_id=? ORDER BY id DESC LIMIT 5",
+        (user_id,)
+    )
+    rows = cur.fetchall()
+
+    if not rows:
+        await q.edit_message_text("❌ No score history found.")
+        return
+
+    msg = "📊 MyScoreCard – Recent Tests\n\n"
+    for r in rows:
+        msg += (
+            f"📘 {r[0]} | {r[1]}\n"
+            f"Score: {r[2]}/{r[3]} | {r[4]}\n\n"
+        )
+
+    await q.edit_message_text(msg)
+#-------------------PERFORMANCE---------------
 async def go_performance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
-    await performance(q, context)
+
+    uid = q.from_user.id
+    cur.execute(
+        "SELECT score, total FROM scores "
+        "WHERE user_id=? ORDER BY id DESC LIMIT 7",
+        (uid,)
+    )
+    rows = cur.fetchall()
+
+    if not rows:
+        await q.edit_message_text("❌ No performance data.")
+        return
+
+    msg = "📈 Performance Trend\n\n"
+    for i, r in enumerate(rows[::-1], 1):
+        bar = "█" * int((r[0] / r[1]) * 10)
+        msg += f"Test {i}: {bar} {r[0]}/{r[1]}\n"
+
+    await q.edit_message_text(msg)
 
 #----------pdf generator --------------
 def generate_result_pdf(user_id, exam, topic, attempts, score, total):
@@ -446,7 +492,7 @@ def main():
     app.add_handler(CommandHandler("myscore", myscore))
     app.add_handler(CallbackQueryHandler(review_answers, "^review_"))
     app.add_handler(CallbackQueryHandler(start_new_test, "^start_new$"))
-    app.add_handler(CallbackQueryHandler(go_myscore, "^go_myscore$"))
+    app.add_handler(CallbackQueryHandler(go_myscore, "^go_myscore$"))    
     app.add_handler(CallbackQueryHandler(go_performance, "^go_performance$"))
     app.add_handler(CallbackQueryHandler(pdf_result, "^pdf_result$"))
     app.add_handler(CommandHandler("leaderboard", leaderboard))
@@ -465,6 +511,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
