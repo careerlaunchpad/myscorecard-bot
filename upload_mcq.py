@@ -4,7 +4,7 @@ import sqlite3
 conn = sqlite3.connect("mcq.db")
 cur = conn.cursor()
 
-with open("MPPSC_2025_PYQ_GS_Q1_50.csv", "r", encoding="utf-8") as f:
+with open("mcq_upload.csv", "r", encoding="utf-8") as f:
     reader = csv.DictReader(f)
     for row in reader:
         cur.execute("""
@@ -27,3 +27,4 @@ conn.commit()
 conn.close()
 
 print("✅ CSV imported successfully")
+
