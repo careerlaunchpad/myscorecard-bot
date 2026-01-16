@@ -103,6 +103,8 @@ async def topic_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["q_no"] = 0
     context.user_data["limit"] = 50 if is_paid(q.from_user.id) else 10
     context.user_data["asked_questions"] = []
+    context.user_data["attempts"] = []   
+
 
     # 🔽 LIMIT SAFETY (NO INDENT ISSUE HERE)
     cur.execute(
@@ -142,12 +144,18 @@ async def send_mcq(q, context):
     mcq = cur.fetchone()
 
     if not mcq:
-        #await q.edit_message_text("✅ All questions completed for this topic.")
         return
 
-    # save asked question id
-    context.user_data["asked_questions"].append(mcq[0])
+    # 🔴 SNAPSHOT SAVE (INSIDE FUNCTION)
+    context.user_data["last_question"] = mcq[3]
+    context.user_data["last_options"] = {
+        "A": mcq[4],
+        "B": mcq[5],
+        "C": mcq[6],
+        "D": mcq[7]
+    }
 
+    context.user_data["asked_questions"].append(mcq[0])
     context.user_data["ans"] = mcq[8]
     context.user_data["exp"] = mcq[9]
 
@@ -164,12 +172,56 @@ async def send_mcq(q, context):
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
+#-----------------------Review -----------
+async def review_answers(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    idx = int(q.data.split("_")[1])
+    attempts = context.user_data.get("attempts", [])
+
+    if idx >= len(attempts):
+        await q.edit_message_text("✅ Review completed.")
+        return
+
+    a = attempts[idx]
+
+    msg = (
+        f"❓ Q{idx+1}\n{a['question']}\n\n"
+        f"A. {a['options']['A']}\n"
+        f"B. {a['options']['B']}\n"
+        f"C. {a['options']['C']}\n"
+        f"D. {a['options']['D']}\n\n"
+        f"🧑 Your Answer: {a['selected']}\n"
+        f"✅ Correct Answer: {a['correct']}\n\n"
+        f"📘 {a['explanation']}"
+    )
+
+    kb = []
+    if idx + 1 < len(attempts):
+        kb.append(
+            [InlineKeyboardButton("Next ▶", callback_data=f"review_{idx+1}")]
+        )
+
+    await q.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(kb))
+
 # ---------- ANSWER ----------
 async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
-    if q.data.split("_")[1] == context.user_data["ans"]:
+    selected = q.data.split("_")[1]
+
+    # 🔴 SAVE USER ATTEMPT (INSIDE FUNCTION)
+    context.user_data["attempts"].append({
+        "question": context.user_data["last_question"],
+        "options": context.user_data["last_options"],
+        "selected": selected,
+        "correct": context.user_data["ans"],
+        "explanation": context.user_data["exp"]
+    })
+
+    if selected == context.user_data["ans"]:
         context.user_data["score"] += 1
 
     context.user_data["q_no"] += 1
@@ -197,13 +249,15 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text(
             f"🎯 Test Completed ✅\n\n"
             f"Score: {score}/{total}\n"
-            f"Accuracy: {acc}%"
+            f"Accuracy: {acc}%\n\n"
+            f"👇 Review your answers",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔍 Review Answers", callback_data="review_0")]
+            ])
         )
         return
 
     await send_mcq(q, context)
-
-    
 
 
 # ---------- MY SCORE (USER SCORE HISTORY) ----------
@@ -295,6 +349,7 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("myscore", myscore))
+    app.add_handler(CallbackQueryHandler(review_answers, "^review_"))
     app.add_handler(CommandHandler("leaderboard", leaderboard))
     app.add_handler(CommandHandler("performance", performance))
     app.add_handler(CallbackQueryHandler(exam_select, "^exam_"))
@@ -311,6 +366,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
