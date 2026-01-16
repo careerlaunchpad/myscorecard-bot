@@ -169,29 +169,27 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
-    # check answer
     if q.data.split("_")[1] == context.user_data["ans"]:
         context.user_data["score"] += 1
 
     context.user_data["q_no"] += 1
 
-    # 👉 TEST COMPLETE CONDITION (MOST IMPORTANT)
     if context.user_data["q_no"] >= context.user_data["limit"]:
         score = context.user_data["score"]
         total = context.user_data["q_no"]
 
-        # save score
-        cur.execute("""
-        INSERT INTO scores (user_id, exam, topic, score, total, test_date)
-        VALUES (?, ?, ?, ?, ?, ?)
-        """, (
-            q.from_user.id,
-            context.user_data["exam"],
-            context.user_data["topic"],
-            score,
-            total,
-            datetime.date.today().isoformat()
-        ))
+        cur.execute(
+            "INSERT INTO scores (user_id, exam, topic, score, total, test_date) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                q.from_user.id,
+                context.user_data["exam"],
+                context.user_data["topic"],
+                score,
+                total,
+                datetime.date.today().isoformat()
+            )
+        )
         conn.commit()
 
         acc = round((score / total) * 100, 2)
@@ -203,8 +201,8 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # 👉 NEXT QUESTION
     await send_mcq(q, context)
+
     
 #-----------------old code with comment 
 """async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -346,6 +344,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
