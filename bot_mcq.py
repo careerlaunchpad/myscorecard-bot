@@ -390,6 +390,7 @@ def generate_result_pdf(user_id, exam, topic, attempts, score, total):
     return file_name
 
 # ---------- ANSWER ----------
+# ---------- ANSWER ----------
 async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -399,7 +400,7 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ❌ wrong-only practice list (safe init)
     context.user_data.setdefault("wrong_questions", [])
 
-    # 🔴 SAVE USER ATTEMPT (INSIDE FUNCTION)
+    # 🔴 SAVE USER ATTEMPT
     context.user_data["attempts"].append({
         "question": context.user_data["last_question"],
         "options": context.user_data["last_options"],
@@ -408,19 +409,21 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "explanation": context.user_data["exp"]
     })
 
+    # ✅ CHECK ANSWER
     if selected == context.user_data["ans"]:
         context.user_data["score"] += 1
     else:
-        # ❌ save wrong question for practice
+        # ❌ store wrong question
         context.user_data["wrong_questions"].append({
-        "question": context.user_data["last_question"],
-        "options": context.user_data["last_options"],
-        "correct": context.user_data["ans"],
-        "explanation": context.user_data["exp"]
+            "question": context.user_data["last_question"],
+            "options": context.user_data["last_options"],
+            "correct": context.user_data["ans"],
+            "explanation": context.user_data["exp"]
         })
 
     context.user_data["q_no"] += 1
 
+    # 🎯 TEST COMPLETE
     if context.user_data["q_no"] >= context.user_data["limit"]:
         score = context.user_data["score"]
         total = context.user_data["q_no"]
@@ -445,7 +448,7 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🎯 Test Completed ✅\n\n"
             f"Score: {score}/{total}\n"
             f"Accuracy: {acc}%\n\n"
-            f"👇 Review your answers",
+            f"👇 What would you like to do next?",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔍 Review Answers", callback_data="review_0")],
                 [InlineKeyboardButton("❌ Practice Wrong Only", callback_data="wrong_only")],
@@ -453,15 +456,16 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ])
         )
         return
-        
-    # ❌ wrong-only mode
-if context.user_data.get("wrong_mode"):
-    context.user_data["wrong_index"] += 1
-    await send_wrong_mcq(q, context)
-    return
 
+    # ❌ WRONG-ONLY MODE CONTINUE
+    if context.user_data.get("wrong_mode"):
+        context.user_data["wrong_index"] += 1
+        await send_wrong_mcq(q, context)
+        return
 
+    # ▶️ NORMAL NEXT QUESTION
     await send_mcq(q, context)
+
 #------------------pdf result --------------
 async def pdf_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -596,4 +600,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
