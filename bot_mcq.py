@@ -234,7 +234,7 @@ async def start_new_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(kb)
     )
 #---------------go_myscore-------------------
-    async def go_myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def go_myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
@@ -511,6 +511,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
