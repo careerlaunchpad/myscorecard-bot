@@ -204,40 +204,7 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_mcq(q, context)
 
     
-#-----------------old code with comment 
-"""async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
 
-    if q.data.split("_")[1] == context.user_data["ans"]:
-        context.user_data["score"] += 1
-
-    context.user_data["q_no"] += 1
-
-    if context.user_data["q_no"] >= context.user_data["limit"]:
-        score = context.user_data["score"]
-        total = context.user_data["limit"]
-
-        cur.execute("""
-       # INSERT INTO scores (user_id, exam, topic, score, total, test_date)
-       # VALUES (?, ?, ?, ?, ?, ?)
-        """, (
-            q.from_user.id,
-            context.user_data["exam"],
-            context.user_data["topic"],
-            score,
-            total,
-            datetime.date.today().isoformat()
-        ))
-        conn.commit()
-
-        acc = round((score / total) * 100, 2)
-
-        await q.edit_message_text(
-            f"🎯 Test Completed\nScore: {score}/{total}\nAccuracy: {acc}%"
-        )
-    else:
-        await send_mcq(q, context)"""
 
 # ---------- MY SCORE (USER SCORE HISTORY) ----------
 async def myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -344,6 +311,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
