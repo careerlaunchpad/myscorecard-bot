@@ -102,19 +102,40 @@ async def topic_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["score"] = 0
     context.user_data["q_no"] = 0
     context.user_data["limit"] = 50 if is_paid(q.from_user.id) else 10
+    context.user_data["asked_questions"] = []
 
     await send_mcq(q, context)
 
 # ---------- SEND MCQ ----------
 async def send_mcq(q, context):
-    cur.execute(
-        "SELECT * FROM mcq WHERE exam=? AND topic=? ORDER BY RANDOM() LIMIT 1",
-        (context.user_data["exam"], context.user_data["topic"])
-    )
+    asked = context.user_data.get("asked_questions", [])
+
+    if asked:
+        placeholders = ",".join("?" * len(asked))
+        query = f"""
+        SELECT * FROM mcq 
+        WHERE exam=? AND topic=? 
+        AND id NOT IN ({placeholders})
+        ORDER BY RANDOM() LIMIT 1
+        """
+        params = [context.user_data["exam"], context.user_data["topic"]] + asked
+    else:
+        query = """
+        SELECT * FROM mcq 
+        WHERE exam=? AND topic=? 
+        ORDER BY RANDOM() LIMIT 1
+        """
+        params = [context.user_data["exam"], context.user_data["topic"]]
+
+    cur.execute(query, params)
     mcq = cur.fetchone()
+
     if not mcq:
-        await q.edit_message_text("❌ No MCQ found.")
+        await q.edit_message_text("✅ All questions completed for this topic.")
         return
+
+    # save asked question id
+    context.user_data["asked_questions"].append(mcq[0])
 
     context.user_data["ans"] = mcq[8]
     context.user_data["exp"] = mcq[9]
@@ -271,6 +292,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
