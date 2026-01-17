@@ -53,15 +53,11 @@ conn.commit()
 # ================= SAFE HELPERS =================
 async def safe_edit_or_send(q, text, reply_markup=None):
     try:
-        await q.edit_message_text(
-            text, reply_markup=reply_markup, parse_mode="Markdown"
-        )
+        await q.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
     except Exception:
-        await q.message.reply_text(
-            text, reply_markup=reply_markup, parse_mode="Markdown"
-        )
+        await q.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
 
-def safe_hindi(text: str) -> str:
+def safe_hindi(text):
     if not text:
         return ""
     return unicodedata.normalize("NFKC", text)
@@ -96,11 +92,7 @@ async def start_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     context.user_data.clear()
-    await safe_edit_or_send(
-        q,
-        "👋 *Welcome to MyScoreCard Bot*\n\nSelect Exam 👇",
-        exam_kb()
-    )
+    await safe_edit_or_send(q, "👋 *Welcome to MyScoreCard Bot*\n\nSelect Exam 👇", exam_kb())
 
 # ================= EXAM =================
 async def exam_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -113,7 +105,7 @@ async def exam_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     cur.execute("SELECT COUNT(*) FROM mcq WHERE exam=?", (exam,))
     if cur.fetchone()[0] == 0:
-        await safe_edit_or_send(q, "❌ इस Exam में प्रश्न उपलब्ध नहीं हैं।", home_kb())
+        await safe_edit_or_send(q, "❌ इस Exam में प्रश्न नहीं हैं।", home_kb())
         return
 
     await safe_edit_or_send(
@@ -225,7 +217,7 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= RESULT =================
 async def show_result(q, context):
     cur.execute(
-        "INSERT INTO scores (user_id, exam, topic, score, total, test_date) VALUES (?,?,?,?,?,?)",
+        "INSERT INTO scores VALUES (NULL,?,?,?,?,?,?)",
         (
             q.from_user.id,
             context.user_data["exam"],
@@ -248,59 +240,57 @@ async def show_result(q, context):
         ])
     )
 
-# ================= PDF (FIXED HINDI) =================
+# ================= PDF (REAL HINDI FIX) =================
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.colors import lightgrey
 
-pdfmetrics.registerFont(UnicodeCIDFont("HeiseiMin-W3"))
+pdfmetrics.registerFont(
+    TTFont("NotoHindi", "NotoSansDevanagari-Regular.ttf")
+)
 
 def generate_pdf(uid, exam, topic, attempts, score, total):
     file = f"MyScoreCard_Result_{uid}.pdf"
-    doc = SimpleDocTemplate(file, pagesize=A4)
+    doc = SimpleDocTemplate(file, pagesize=A4, leftMargin=40, rightMargin=40)
 
     styles = getSampleStyleSheet()
     styles.add(ParagraphStyle(
         name="Hindi",
-        fontName="HeiseiMin-W3",
+        fontName="NotoHindi",
         fontSize=11,
-        leading=15
+        leading=16
+    ))
+    styles.add(ParagraphStyle(
+        name="HindiTitle",
+        fontName="NotoHindi",
+        fontSize=14,
+        leading=20
     ))
 
     story = []
-    story.append(Paragraph("📘 MyScoreCard – टेस्ट परिणाम", styles["Hindi"]))
-    story.append(Spacer(1, 10))
-    story.append(Paragraph(f"परीक्षा: {safe_hindi(exam)}", styles["Hindi"]))
-    story.append(Paragraph(f"विषय: {safe_hindi(topic)}", styles["Hindi"]))
-    story.append(Paragraph(f"स्कोर: {score}/{total}", styles["Hindi"]))
-    story.append(Spacer(1, 15))
+    story.append(Paragraph("MyScoreCard – टेस्ट परिणाम", styles["HindiTitle"]))
+    story.append(Paragraph(f"परीक्षा : {safe_hindi(exam)}", styles["Hindi"]))
+    story.append(Paragraph(f"विषय : {safe_hindi(topic)}", styles["Hindi"]))
+    story.append(Paragraph(f"स्कोर : {score}/{total}", styles["Hindi"]))
+    story.append(Spacer(1, 14))
 
     for i, a in enumerate(attempts, 1):
-        story.append(Paragraph(
-            f"<b>प्रश्न {i}:</b> {safe_hindi(a['question'])}",
-            styles["Hindi"]
-        ))
-        story.append(Paragraph(
-            f"<b>सही उत्तर:</b> {safe_hindi(a['correct'])}",
-            styles["Hindi"]
-        ))
-        story.append(Paragraph(
-            f"<b>व्याख्या:</b> {safe_hindi(a['explanation'])}",
-            styles["Hindi"]
-        ))
+        story.append(Paragraph(f"<b>प्रश्न {i} :</b> {safe_hindi(a['question'])}", styles["Hindi"]))
+        story.append(Paragraph(f"<b>सही उत्तर :</b> {safe_hindi(a['correct'])}", styles["Hindi"]))
+        story.append(Paragraph(f"<b>व्याख्या :</b> {safe_hindi(a['explanation'])}", styles["Hindi"]))
         story.append(Spacer(1, 12))
 
-    def watermark(canvas, doc):
-        canvas.saveState()
-        canvas.setFont("HeiseiMin-W3", 32)
-        canvas.setFillColor(lightgrey)
-        canvas.translate(300, 400)
-        canvas.rotate(45)
-        canvas.drawCentredString(0, 0, "MyScoreCard Bot")
-        canvas.restoreState()
+    def watermark(c, d):
+        c.saveState()
+        c.setFont("NotoHindi", 28)
+        c.setFillColor(lightgrey)
+        c.translate(300, 420)
+        c.rotate(45)
+        c.drawCentredString(0, 0, "MyScoreCard Bot")
+        c.restoreState()
 
     doc.build(story, onFirstPage=watermark, onLaterPages=watermark)
     return file
@@ -308,10 +298,6 @@ def generate_pdf(uid, exam, topic, attempts, score, total):
 async def pdf_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
-
-    if "exam" not in context.user_data:
-        await safe_edit_or_send(q, "⚠️ No active test found.", home_kb())
-        return
 
     file = generate_pdf(
         q.from_user.id,
@@ -328,12 +314,6 @@ async def pdf_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
         filename=file
     )
 
-    await context.bot.send_message(
-        chat_id=q.from_user.id,
-        text="📄 PDF Generated Successfully",
-        reply_markup=home_kb()
-    )
-
 # ================= MAIN =================
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
@@ -345,10 +325,6 @@ def main():
     app.add_handler(CallbackQueryHandler(exam_select, "^exam_"))
     app.add_handler(CallbackQueryHandler(topic_select, "^topic_"))
     app.add_handler(CallbackQueryHandler(answer, "^ans_"))
-    app.add_handler(CallbackQueryHandler(wrong_only, "^wrong_only$"))
-    app.add_handler(CallbackQueryHandler(wrong_next, "^wrong_next$"))
-    app.add_handler(CallbackQueryHandler(wrong_prev, "^wrong_prev$"))
-    app.add_handler(CallbackQueryHandler(myscore, "^myscore$"))
     app.add_handler(CallbackQueryHandler(pdf_result, "^pdf_result$"))
 
     print("🤖 Bot Running...")
