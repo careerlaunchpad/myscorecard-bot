@@ -114,7 +114,7 @@ async def topic_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "score": 0,
         "q_no": 0,
         "asked": [],
-        "limit": min(10, total_q)  # 🔒 HARD FIX
+        "limit": min(10, total_q)  # ✅ SAFE LIMIT
     })
 
     await send_mcq(q, context)
@@ -124,8 +124,10 @@ async def send_mcq(q, context):
     exam = context.user_data["exam"]
     topic = context.user_data["topic"]
     asked = context.user_data["asked"]
+    limit = context.user_data["limit"]
 
-    if len(asked) >= context.user_data["limit"]:
+    # 🔒 FIX-1: questions exhausted
+    if len(asked) >= limit:
         await show_result(q, context)
         return
 
@@ -136,7 +138,8 @@ async def send_mcq(q, context):
             SELECT * FROM mcq
             WHERE exam=? AND topic=?
             AND id NOT IN ({ph})
-            ORDER BY RANDOM() LIMIT 1
+            ORDER BY RANDOM()
+            LIMIT 1
             """,
             [exam, topic] + asked
         )
@@ -148,7 +151,8 @@ async def send_mcq(q, context):
 
     mcq = cur.fetchone()
 
-    if mcq is None:   # 🔥 FINAL SAFETY
+    # 🔒 FIX-2: SQL returned nothing
+    if mcq is None:
         await show_result(q, context)
         return
 
@@ -163,7 +167,7 @@ async def send_mcq(q, context):
     ]
 
     await q.edit_message_text(
-        f"❓ *Q{context.user_data['q_no']+1}/{context.user_data['limit']}*\n\n"
+        f"❓ *Q{context.user_data['q_no']+1}/{limit}*\n\n"
         f"{mcq[3]}\n\n"
         f"A. {mcq[4]}\nB. {mcq[5]}\nC. {mcq[6]}\nD. {mcq[7]}",
         parse_mode="Markdown",
@@ -175,12 +179,14 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
-    selected = q.data.split("_")[1]
     mcq = context.user_data.get("current")
 
+    # 🔒 FIX-3: safety guard
     if not mcq:
         await show_result(q, context)
         return
+
+    selected = q.data.split("_")[1]
 
     if selected == mcq[8]:
         context.user_data["score"] += 1
@@ -279,7 +285,7 @@ async def handle_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     conn.commit()
 
-    await update.message.reply_text(f"✅ {len(df)} MCQs uploaded")
+    await update.message.reply_text(f"✅ {len(df)} MCQs uploaded successfully")
 
 # ================= MAIN =================
 def main():
@@ -297,7 +303,7 @@ def main():
     app.add_handler(CallbackQueryHandler(topic_select, "^topic_"))
     app.add_handler(CallbackQueryHandler(answer, "^ans_"))
 
-    print("🤖 MyScoreCard Bot Running (BUG-FREE)")
+    print("🤖 MyScoreCard Bot Running (Freeze-Free)")
     app.run_polling()
 
 if __name__ == "__main__":
