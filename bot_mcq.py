@@ -14,7 +14,7 @@ from telegram.ext import (
 
 # ================= CONFIG =================
 TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_IDS = [1977205811]  # <-- apni Telegram ID yahan daalo
+ADMIN_IDS = [1977205811]  # your Telegram ID
 
 # ================= DATABASE =================
 conn = sqlite3.connect("mcq.db", check_same_thread=False)
@@ -49,8 +49,8 @@ CREATE TABLE IF NOT EXISTS scores (
 conn.commit()
 
 # ================= HELPERS =================
-def is_admin(user_id):
-    return user_id in ADMIN_IDS
+def is_admin(uid):
+    return uid in ADMIN_IDS
 
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -63,10 +63,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
+# ================= START NEW (CALLBACK SAFE) =================
+async def start_new_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    kb = [
+        [InlineKeyboardButton("📘 MPPSC", callback_data="exam_MPPSC")],
+        [InlineKeyboardButton("📕 UGC NET", callback_data="exam_NET")]
+    ]
+    await q.edit_message_text(
+        "🔁 Start New Test\n\nSelect Exam 👇",
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
+
 # ================= EXAM =================
 async def exam_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
+
     context.user_data.clear()
     context.user_data["exam"] = q.data.split("_")[1]
 
@@ -81,22 +96,20 @@ async def topic_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
-    context.user_data["topic"] = q.data.split("_")[1]
     context.user_data.update({
+        "topic": q.data.split("_")[1],
         "score": 0,
         "q_no": 0,
         "limit": 10,
-        "asked": [],
-        "attempts": [],
-        "wrong": []
+        "asked": []
     })
     await send_mcq(q, context)
 
 # ================= SEND MCQ =================
 async def send_mcq(q, context):
-    asked = context.user_data["asked"]
     exam = context.user_data["exam"]
     topic = context.user_data["topic"]
+    asked = context.user_data["asked"]
 
     if asked:
         ph = ",".join("?" * len(asked))
@@ -141,15 +154,8 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if selected == mcq[8]:
         context.user_data["score"] += 1
-    else:
-        context.user_data["wrong"].append(mcq)
 
     context.user_data["q_no"] += 1
-
-    if context.user_data["q_no"] >= context.user_data["limit"]:
-        await show_result(q, context)
-        return
-
     await send_mcq(q, context)
 
 # ================= RESULT =================
@@ -163,54 +169,61 @@ async def show_result(q, context):
             q.from_user.id,
             context.user_data["exam"],
             context.user_data["topic"],
-            s,
-            t,
+            s, t,
             datetime.date.today().isoformat()
         )
     )
     conn.commit()
 
     await q.edit_message_text(
-        f"🎯 Test Completed\nScore: {s}/{t}",
+        f"🎯 Test Completed\n\nScore: {s}/{t}",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔁 New Test", callback_data="start_new")],
+            [InlineKeyboardButton("🔁 Start New Test", callback_data="start_new")],
             [InlineKeyboardButton("📊 My Score", callback_data="myscore")]
         ])
     )
 
-# ================= ADMIN DASHBOARD =================
+# ================= MY SCORE =================
+async def myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    cur.execute(
+        "SELECT exam, topic, score, total, test_date FROM scores WHERE user_id=? ORDER BY id DESC LIMIT 5",
+        (uid,)
+    )
+    rows = cur.fetchall()
+
+    if not rows:
+        await update.message.reply_text("❌ No score history found.")
+        return
+
+    msg = "📊 Your Recent Tests\n\n"
+    for r in rows:
+        msg += f"{r[0]} | {r[1]} → {r[2]}/{r[3]} ({r[4]})\n"
+
+    await update.message.reply_text(msg)
+
+# ================= ADMIN =================
 async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
 
     cur.execute("SELECT COUNT(*) FROM mcq")
-    total_mcq = cur.fetchone()[0]
-
+    mcq = cur.fetchone()[0]
     cur.execute("SELECT COUNT(*) FROM scores")
-    total_tests = cur.fetchone()[0]
+    tests = cur.fetchone()[0]
 
-    cur.execute("SELECT COUNT(DISTINCT user_id) FROM scores")
-    users = cur.fetchone()[0]
-
-    msg = (
-        "🛠 ADMIN DASHBOARD\n\n"
-        f"📚 Total MCQs: {total_mcq}\n"
-        f"👤 Active Users: {users}\n"
-        f"📝 Tests Conducted: {total_tests}\n\n"
-        "📤 Upload MCQs via Excel using /upload"
+    await update.message.reply_text(
+        f"🛠 ADMIN DASHBOARD\n\n"
+        f"📚 MCQs: {mcq}\n"
+        f"📝 Tests: {tests}\n\n"
+        f"/upload – Upload Excel"
     )
-    await update.message.reply_text(msg)
 
 # ================= EXCEL UPLOAD =================
 async def upload_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
-
-    await update.message.reply_text(
-        "📤 Send Excel file (.xlsx)\n\n"
-        "Columns must be:\n"
-        "exam, topic, question, a, b, c, d, correct, explanation"
-    )
+    await update.message.reply_text("📤 Send Excel (.xlsx)")
 
 async def handle_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
@@ -222,38 +235,33 @@ async def handle_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await file.download_to_drive(path)
 
     df = pd.read_excel(path)
-
     for _, r in df.iterrows():
         cur.execute(
             "INSERT INTO mcq VALUES (NULL,?,?,?,?,?,?,?,?,?)",
-            (
-                r["exam"], r["topic"], r["question"],
-                r["a"], r["b"], r["c"], r["d"],
-                r["correct"], r["explanation"]
-            )
+            (r.exam, r.topic, r.question, r.a, r.b, r.c, r.d, r.correct, r.explanation)
         )
     conn.commit()
 
-    await update.message.reply_text(f"✅ {len(df)} MCQs uploaded successfully!")
+    await update.message.reply_text(f"✅ {len(df)} MCQs uploaded")
 
 # ================= MAIN =================
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("myscore", myscore))
     app.add_handler(CommandHandler("admin", admin_dashboard))
     app.add_handler(CommandHandler("upload", upload_excel))
 
     app.add_handler(MessageHandler(filters.Document.ALL, handle_excel))
 
+    app.add_handler(CallbackQueryHandler(start_new_test, "^start_new$"))
     app.add_handler(CallbackQueryHandler(exam_select, "^exam_"))
     app.add_handler(CallbackQueryHandler(topic_select, "^topic_"))
     app.add_handler(CallbackQueryHandler(answer, "^ans_"))
-    app.add_handler(CallbackQueryHandler(start, "^start_new$"))
 
     print("🤖 Bot Running...")
     app.run_polling()
 
 if __name__ == "__main__":
     main()
-
