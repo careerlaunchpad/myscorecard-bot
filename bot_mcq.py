@@ -52,9 +52,17 @@ conn.commit()
 # ================= SAFE EDIT =================
 async def safe_edit_or_send(q, text, reply_markup=None):
     try:
-        await q.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+        await q.edit_message_text(
+            text,
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
+        )
     except Exception:
-        await q.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+        await q.message.reply_text(
+            text,
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
+        )
 
 # ================= HELPERS =================
 def is_admin(uid):
@@ -127,7 +135,10 @@ async def topic_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_edit_or_send(q, "⚠️ Session expired.", home_kb())
         return
 
-    cur.execute("SELECT COUNT(*) FROM mcq WHERE exam=? AND topic=?", (exam, topic))
+    cur.execute(
+        "SELECT COUNT(*) FROM mcq WHERE exam=? AND topic=?",
+        (exam, topic)
+    )
     total = cur.fetchone()[0]
 
     if total == 0:
@@ -155,7 +166,10 @@ async def send_mcq(q, context):
     if asked:
         ph = ",".join("?" * len(asked))
         cur.execute(
-            f"SELECT * FROM mcq WHERE exam=? AND topic=? AND id NOT IN ({ph}) ORDER BY RANDOM() LIMIT 1",
+            f"""SELECT * FROM mcq
+                WHERE exam=? AND topic=?
+                AND id NOT IN ({ph})
+                ORDER BY RANDOM() LIMIT 1""",
             [exam, topic] + asked
         )
     else:
@@ -320,16 +334,7 @@ async def myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await send(msg, parse_mode="Markdown", reply_markup=home_kb())
 
-# ================= PDF (SAFE HINDI) =================
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.cidfonts import UnicodeCIDFont
-from reportlab.lib.colors import lightgrey
-
-#pdfmetrics.registerFont(UnicodeCIDFont("HeiseiMin-W3"))
-# ================= PDF (FINAL SAFE HINDI + WATERMARK) =================
+# ================= PDF (FINAL SAFE HINDI) =================
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -337,100 +342,46 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.colors import lightgrey
 
-# Register Hindi Font (Google Noto)
 pdfmetrics.registerFont(
     TTFont("NotoHindi", "NotoSansDevanagari-Regular.ttf")
 )
 
 def generate_pdf(uid, exam, topic, attempts, score, total):
     file = f"MyScoreCard_Result_{uid}.pdf"
-
-    doc = SimpleDocTemplate(
-        file,
-        pagesize=A4,
-        rightMargin=36,
-        leftMargin=36,
-        topMargin=36,
-        bottomMargin=36
-    )
+    doc = SimpleDocTemplate(file, pagesize=A4)
 
     styles = getSampleStyleSheet()
-
     styles.add(ParagraphStyle(
         name="Hindi",
         fontName="NotoHindi",
         fontSize=11,
         leading=15
     ))
-
     styles.add(ParagraphStyle(
         name="HindiTitle",
         fontName="NotoHindi",
         fontSize=16,
-        leading=20,
-        spaceAfter=12
+        leading=20
     ))
 
     story = []
-
-    # Header
     story.append(Paragraph("📘 MyScoreCard – टेस्ट परिणाम", styles["HindiTitle"]))
     story.append(Paragraph(f"परीक्षा : {exam}", styles["Hindi"]))
     story.append(Paragraph(f"विषय : {topic}", styles["Hindi"]))
     story.append(Paragraph(f"स्कोर : {score}/{total}", styles["Hindi"]))
     story.append(Spacer(1, 14))
 
-    # Questions
     for i, a in enumerate(attempts, 1):
         story.append(Paragraph(f"<b>प्रश्न {i}:</b> {a['question']}", styles["Hindi"]))
-        story.append(Spacer(1, 6))
         story.append(Paragraph(f"<b>सही उत्तर:</b> {a['correct']}", styles["Hindi"]))
         story.append(Paragraph(f"<b>व्याख्या:</b> {a['explanation']}", styles["Hindi"]))
-        story.append(Spacer(1, 14))
-
-    # Watermark
-    def watermark(canvas, doc):
-        canvas.saveState()
-        canvas.setFont("NotoHindi", 30)
-        canvas.setFillColor(lightgrey)
-        canvas.translate(300, 420)
-        canvas.rotate(45)
-        canvas.drawCentredString(0, 0, "MyScoreCard Bot")
-        canvas.restoreState()
-
-    doc.build(
-        story,
-        onFirstPage=watermark,
-        onLaterPages=watermark
-    )
-
-    return file
-
-
-def generate_pdf(uid, exam, topic, attempts, score, total):
-    file = f"result_{uid}.pdf"
-    doc = SimpleDocTemplate(file, pagesize=A4)
-    styles = getSampleStyleSheet()
-    styles["Normal"].fontName = "HeiseiMin-W3"
-    story = []
-
-    story.append(Paragraph("📘 MyScoreCard – टेस्ट परिणाम", styles["Title"]))
-    story.append(Paragraph(f"परीक्षा: {exam}", styles["Normal"]))
-    story.append(Paragraph(f"विषय: {topic}", styles["Normal"]))
-    story.append(Paragraph(f"स्कोर: {score}/{total}", styles["Normal"]))
-    story.append(Spacer(1, 20))
-
-    for i, a in enumerate(attempts, 1):
-        story.append(Paragraph(f"<b>प्रश्न {i}:</b> {a['question']}", styles["Normal"]))
-        story.append(Paragraph(f"सही उत्तर: {a['correct']}", styles["Normal"]))
-        story.append(Paragraph(f"व्याख्या: {a['explanation']}", styles["Normal"]))
-        story.append(Spacer(1, 15))
+        story.append(Spacer(1, 12))
 
     def watermark(c, d):
         c.saveState()
-        c.setFont("HeiseiMin-W3", 36)
+        c.setFont("NotoHindi", 30)
         c.setFillColor(lightgrey)
-        c.translate(300, 400)
+        c.translate(300, 420)
         c.rotate(45)
         c.drawCentredString(0, 0, "MyScoreCard Bot")
         c.restoreState()
@@ -532,4 +483,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
