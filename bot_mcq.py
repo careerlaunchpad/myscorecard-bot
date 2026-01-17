@@ -14,7 +14,7 @@ from telegram.ext import (
 
 # ================= CONFIG =================
 TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_IDS = [123456789]  # <-- apni Telegram ID yahan daalo
+ADMIN_IDS = [1977205811]  # <-- apni Telegram ID yahan daalo
 
 # ================= DATABASE =================
 conn = sqlite3.connect("mcq.db", check_same_thread=False)
@@ -256,3 +256,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
