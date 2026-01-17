@@ -18,8 +18,8 @@ from telegram.ext import (
 )
 
 # ================= CONFIG =================
-TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_IDS = [1977205811]   # 👈 अपनी numeric Telegram ID
+TOKEN = os.getenv("BOT_TOKEN")  # set env variable
+ADMIN_IDS = [1977205811]        # 👈 अपनी Telegram numeric ID
 
 # ================= DATABASE =================
 conn = sqlite3.connect("mcq.db", check_same_thread=False)
@@ -64,17 +64,28 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📕 UGC NET", callback_data="exam_NET")]
     ]
     await update.message.reply_text(
-        "👋 Welcome to *MyScoreCard Bot* 🎯\n\nSelect Exam 👇",
+        "👋 *Welcome to MyScoreCard Bot*\n\nSelect Exam 👇",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
-# ================= START NEW =================
+# ================= START NEW (SAFE CALLBACK) =================
 async def start_new_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
+
     context.user_data.clear()
-    await start(update, context)
+
+    kb = [
+        [InlineKeyboardButton("📘 MPPSC", callback_data="exam_MPPSC")],
+        [InlineKeyboardButton("📕 UGC NET", callback_data="exam_NET")]
+    ]
+
+    await q.edit_message_text(
+        "🔁 *Start New Test*\n\nSelect Exam 👇",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
 
 # ================= EXAM =================
 async def exam_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -88,7 +99,10 @@ async def exam_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("History", callback_data="topic_History")],
         [InlineKeyboardButton("Polity", callback_data="topic_Polity")]
     ]
-    await q.edit_message_text("Choose Topic 👇", reply_markup=InlineKeyboardMarkup(kb))
+    await q.edit_message_text(
+        "Choose Topic 👇",
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
 
 # ================= TOPIC =================
 async def topic_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -144,6 +158,7 @@ async def send_mcq(q, context):
 
     mcq = cur.fetchone()
 
+    # ✅ FINAL SAFETY: no freeze
     if not mcq:
         await show_result(q, context)
         return
@@ -193,12 +208,10 @@ async def show_result(q, context):
     score = context.user_data["score"]
     total = context.user_data["q_no"]
 
-    # ✅ FIXED INSERT (NO FREEZE)
     cur.execute(
         """
-        INSERT INTO scores (
-            user_id, exam, topic, score, total, test_date
-        ) VALUES (?,?,?,?,?,?)
+        INSERT INTO scores (user_id, exam, topic, score, total, test_date)
+        VALUES (?,?,?,?,?,?)
         """,
         (
             q.from_user.id,
@@ -286,7 +299,11 @@ async def handle_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     for _, r in df.iterrows():
         cur.execute(
-            "INSERT INTO mcq VALUES (NULL,?,?,?,?,?,?,?,?,?)",
+            """
+            INSERT INTO mcq
+            (exam, topic, question, a, b, c, d, correct, explanation)
+            VALUES (?,?,?,?,?,?,?,?,?)
+            """,
             (
                 r.exam, r.topic, r.question,
                 r.a, r.b, r.c, r.d,
