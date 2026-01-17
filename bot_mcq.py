@@ -55,9 +55,6 @@ CREATE TABLE IF NOT EXISTS scores (
 conn.commit()
 
 # ================= HELPERS =================
-def is_admin(uid):
-    return uid in ADMIN_IDS
-
 def home_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🏠 Home", callback_data="start_new")],
@@ -67,14 +64,13 @@ def home_kb():
 
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    kb = [
-        [InlineKeyboardButton("📘 MPPSC", callback_data="exam_MPPSC")],
-        [InlineKeyboardButton("📕 UGC NET", callback_data="exam_NET")]
-    ]
     await update.message.reply_text(
         "👋 *Welcome to MyScoreCard Bot*\n\nSelect Exam 👇",
         parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(kb)
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("📘 MPPSC", callback_data="exam_MPPSC")],
+            [InlineKeyboardButton("📕 UGC NET", callback_data="exam_NET")]
+        ])
     )
 
 async def start_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -104,10 +100,7 @@ async def exam_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text(
             f"❌ *{exam}* में कोई प्रश्न उपलब्ध नहीं है।",
             parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🏠 Home", callback_data="start_new")],
-                [InlineKeyboardButton("📊 My Score", callback_data="myscore")]
-            ])
+            reply_markup=home_kb()
         )
         return
 
@@ -124,23 +117,17 @@ async def topic_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
-    exam = context.user_data["exam"]
+    exam = context.user_data.get("exam")
     topic = q.data.split("_")[1]
 
-    cur.execute(
-        "SELECT COUNT(*) FROM mcq WHERE exam=? AND topic=?",
-        (exam, topic)
-    )
-    total_q = cur.fetchone()[0]
+    cur.execute("SELECT COUNT(*) FROM mcq WHERE exam=? AND topic=?", (exam, topic))
+    total = cur.fetchone()[0]
 
-    if total_q == 0:
+    if total == 0:
         await q.edit_message_text(
             f"❌ *{exam} → {topic}* में प्रश्न नहीं हैं।",
             parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🏠 Home", callback_data="start_new")],
-                [InlineKeyboardButton("📊 My Score", callback_data="myscore")]
-            ])
+            reply_markup=home_kb()
         )
         return
 
@@ -148,7 +135,7 @@ async def topic_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "topic": topic,
         "score": 0,
         "q_no": 0,
-        "limit": total_q,
+        "limit": total,
         "asked": [],
         "attempts": [],
         "wrong": []
@@ -255,7 +242,7 @@ async def wrong_only(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
-    if not context.user_data["wrong"]:
+    if not context.user_data.get("wrong"):
         await q.edit_message_text("🎉 No wrong questions!", reply_markup=home_kb())
         return
 
@@ -263,8 +250,8 @@ async def wrong_only(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await show_wrong(q, context)
 
 async def show_wrong(q, context):
-    idx = context.user_data["wrong_idx"]
     wrong = context.user_data["wrong"]
+    idx = context.user_data.get("wrong_idx", 0)
 
     if idx >= len(wrong):
         await q.edit_message_text("✅ Wrong-Only Completed", reply_markup=home_kb())
@@ -280,7 +267,8 @@ async def show_wrong(q, context):
             [InlineKeyboardButton("⬅️ Prev", callback_data="wrong_prev"),
              InlineKeyboardButton("➡️ Next", callback_data="wrong_next")],
             [InlineKeyboardButton("🏠 Home", callback_data="start_new"),
-             InlineKeyboardButton("📄 Download PDF", callback_data="pdf_result")]
+             InlineKeyboardButton("📄 Download PDF", callback_data="pdf_result")],
+            [InlineKeyboardButton("📊 My Score", callback_data="myscore")]
         ])
     )
 
@@ -293,13 +281,13 @@ async def wrong_next(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def wrong_prev(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
-    context.user_data["wrong_idx"] -= 1
+    context.user_data["wrong_idx"] = max(0, context.user_data["wrong_idx"] - 1)
     await show_wrong(q, context)
 
 # ================= MY SCORE =================
 async def myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    if q:
+    if update.callback_query:
+        q = update.callback_query
         await q.answer()
         send = q.edit_message_text
     else:
@@ -350,7 +338,7 @@ def generate_pdf(uid, exam, topic, attempts, score, total):
             story.append(Paragraph(f"{k}. {v}", styles["Normal"]))
         story.append(Paragraph(f"सही उत्तर: {a['correct']}", styles["Normal"]))
         story.append(Paragraph(f"व्याख्या: {a['explanation']}", styles["Normal"]))
-        story.append(Spacer(1, 15))
+        story.append(Spacer(1, 12))
 
     def watermark(c, d):
         c.saveState()
@@ -370,17 +358,23 @@ async def pdf_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     file = generate_pdf(
         q.from_user.id,
-        context.user_data["exam"],
-        context.user_data["topic"],
-        context.user_data["attempts"],
-        context.user_data["score"],
-        context.user_data["q_no"]
+        context.user_data.get("exam",""),
+        context.user_data.get("topic",""),
+        context.user_data.get("attempts",[]),
+        context.user_data.get("score",0),
+        context.user_data.get("q_no",0)
     )
 
     await context.bot.send_document(
         chat_id=q.from_user.id,
         document=open(file, "rb"),
         filename="MyScoreCard_Result.pdf"
+    )
+
+    await context.bot.send_message(
+        chat_id=q.from_user.id,
+        text="📄 PDF Generated Successfully",
+        reply_markup=home_kb()
     )
 
 # ================= MAIN =================
