@@ -3,12 +3,7 @@ import sqlite3
 import datetime
 import pandas as pd
 
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    Document
-)
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -82,7 +77,16 @@ async def start_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     context.user_data.clear()
-    await start(update, context)
+
+    kb = [
+        [InlineKeyboardButton("📘 MPPSC", callback_data="exam_MPPSC")],
+        [InlineKeyboardButton("📕 UGC NET", callback_data="exam_NET")]
+    ]
+    await q.edit_message_text(
+        "👋 *Welcome to MyScoreCard Bot*\n\nSelect Exam 👇",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
 
 # ================= EXAM =================
 async def exam_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -365,7 +369,12 @@ async def pdf_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_document(
         chat_id=q.from_user.id,
         document=open(file, "rb"),
-        filename="MyScoreCard_Result.pdf",
+        filename="MyScoreCard_Result.pdf"
+    )
+
+    await context.bot.send_message(
+        chat_id=q.from_user.id,
+        text="📄 PDF generated successfully ✅",
         reply_markup=home_buttons()
     )
 
@@ -428,6 +437,7 @@ def main():
     app.add_handler(CallbackQueryHandler(wrong_next, "^wrong_next$"))
     app.add_handler(CallbackQueryHandler(wrong_prev, "^wrong_prev$"))
     app.add_handler(CallbackQueryHandler(pdf_result, "^pdf_result$"))
+    app.add_handler(CallbackQueryHandler(myscore, "^myscore$"))
 
     print("🤖 MyScoreCard Bot Running...")
     app.run_polling()
