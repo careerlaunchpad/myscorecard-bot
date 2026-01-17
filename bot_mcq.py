@@ -1,3 +1,4 @@
+# ================= IMPORTS =================
 import os
 import sqlite3
 import datetime
@@ -15,8 +16,8 @@ from telegram.ext import (
 )
 
 # ================= CONFIG =================
-TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_IDS = [1977205811]
+TOKEN = os.getenv("BOT_TOKEN")   # Telegram Bot Token
+ADMIN_IDS = [1977205811]         # अपनी numeric Telegram ID
 
 # ================= DATABASE =================
 conn = sqlite3.connect("mcq.db", check_same_thread=False)
@@ -62,7 +63,10 @@ def safe_hindi(text):
         return ""
     return unicodedata.normalize("NFKC", text)
 
-# ================= UI HELPERS =================
+def is_admin(uid):
+    return uid in ADMIN_IDS
+
+# ================= KEYBOARDS =================
 def exam_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📘 MPPSC", callback_data="exam_MPPSC")],
@@ -75,9 +79,6 @@ def home_kb():
         [InlineKeyboardButton("📊 My Score", callback_data="myscore")],
         [InlineKeyboardButton("📄 Download PDF", callback_data="pdf_result")]
     ])
-
-def is_admin(uid):
-    return uid in ADMIN_IDS
 
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -105,7 +106,7 @@ async def exam_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     cur.execute("SELECT COUNT(*) FROM mcq WHERE exam=?", (exam,))
     if cur.fetchone()[0] == 0:
-        await safe_edit_or_send(q, "❌ इस Exam में प्रश्न नहीं हैं।", home_kb())
+        await safe_edit_or_send(q, "❌ इस Exam में प्रश्न उपलब्ध नहीं हैं।", home_kb())
         return
 
     await safe_edit_or_send(
@@ -217,7 +218,7 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= RESULT =================
 async def show_result(q, context):
     cur.execute(
-        "INSERT INTO scores VALUES (NULL,?,?,?,?,?,?)",
+        "INSERT INTO scores (user_id, exam, topic, score, total, test_date) VALUES (?,?,?,?,?,?)",
         (
             q.from_user.id,
             context.user_data["exam"],
@@ -240,52 +241,130 @@ async def show_result(q, context):
         ])
     )
 
-# ================= PDF (REAL HINDI FIX) =================
+# ================= WRONG ONLY =================
+async def wrong_only(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    if not context.user_data["wrong"]:
+        await safe_edit_or_send(q, "🎉 No wrong questions!", home_kb())
+        return
+
+    context.user_data["widx"] = 0
+    await show_wrong(q, context)
+
+async def show_wrong(q, context):
+    idx = context.user_data["widx"]
+    wrong = context.user_data["wrong"]
+
+    if idx >= len(wrong):
+        await safe_edit_or_send(q, "✅ Wrong Practice Completed", home_kb())
+        return
+
+    w = wrong[idx]
+    await safe_edit_or_send(
+        q,
+        f"❌ *Wrong {idx+1}/{len(wrong)}*\n\n{w[3]}\n\n"
+        f"A. {w[4]}\nB. {w[5]}\nC. {w[6]}\nD. {w[7]}\n\n"
+        f"✅ Correct: *{w[8]}*\n\n📘 {w[9]}",
+        InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("⬅️ Prev", callback_data="wrong_prev"),
+                InlineKeyboardButton("➡️ Next", callback_data="wrong_next")
+            ],
+            [
+                InlineKeyboardButton("📄 Download PDF", callback_data="pdf_result"),
+                InlineKeyboardButton("🏠 Home", callback_data="start_new")
+            ],
+            [
+                InlineKeyboardButton("📊 My Score", callback_data="myscore")
+            ]
+        ])
+    )
+
+async def wrong_next(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    context.user_data["widx"] += 1
+    await show_wrong(q, context)
+
+async def wrong_prev(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    context.user_data["widx"] -= 1
+    await show_wrong(q, context)
+
+# ================= MY SCORE =================
+async def myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query:
+        q = update.callback_query
+        await q.answer()
+        send = q.edit_message_text
+    else:
+        send = update.message.reply_text
+
+    cur.execute(
+        "SELECT exam, topic, score, total, test_date FROM scores WHERE user_id=? ORDER BY id DESC LIMIT 5",
+        (update.effective_user.id,)
+    )
+    rows = cur.fetchall()
+
+    if not rows:
+        await send("❌ No score history.", reply_markup=home_kb())
+        return
+
+    msg = "📊 *Your Recent Tests*\n\n"
+    for r in rows:
+        msg += f"{r[0]} | {r[1]} → {r[2]}/{r[3]} ({r[4]})\n"
+
+    await send(msg, parse_mode="Markdown", reply_markup=home_kb())
+
+# ================= PDF (REAL HINDI – STABLE) =================
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.styles import ParagraphStyle
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.colors import lightgrey
 
-pdfmetrics.registerFont(
-    TTFont("NotoHindi", "NotoSansDevanagari-Regular.ttf")
-)
+pdfmetrics.registerFont(TTFont("HindiFont", "NotoSansDevanagari-Regular.ttf"))
 
 def generate_pdf(uid, exam, topic, attempts, score, total):
     file = f"MyScoreCard_Result_{uid}.pdf"
+
     doc = SimpleDocTemplate(file, pagesize=A4, leftMargin=40, rightMargin=40)
 
-    styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(
+    style = ParagraphStyle(
         name="Hindi",
-        fontName="NotoHindi",
+        fontName="HindiFont",
         fontSize=11,
         leading=16
-    ))
-    styles.add(ParagraphStyle(
-        name="HindiTitle",
-        fontName="NotoHindi",
+    )
+    title = ParagraphStyle(
+        name="Title",
+        fontName="HindiFont",
         fontSize=14,
         leading=20
-    ))
+    )
 
     story = []
-    story.append(Paragraph("MyScoreCard – टेस्ट परिणाम", styles["HindiTitle"]))
-    story.append(Paragraph(f"परीक्षा : {safe_hindi(exam)}", styles["Hindi"]))
-    story.append(Paragraph(f"विषय : {safe_hindi(topic)}", styles["Hindi"]))
-    story.append(Paragraph(f"स्कोर : {score}/{total}", styles["Hindi"]))
-    story.append(Spacer(1, 14))
+    story.append(Paragraph("MyScoreCard – टेस्ट परिणाम", title))
+    story.append(Spacer(1, 10))
+    story.append(Paragraph(f"परीक्षा : {safe_hindi(exam)}", style))
+    story.append(Paragraph(f"विषय : {safe_hindi(topic)}", style))
+    story.append(Paragraph(f"स्कोर : {score}/{total}", style))
+    story.append(Spacer(1, 15))
 
     for i, a in enumerate(attempts, 1):
-        story.append(Paragraph(f"<b>प्रश्न {i} :</b> {safe_hindi(a['question'])}", styles["Hindi"]))
-        story.append(Paragraph(f"<b>सही उत्तर :</b> {safe_hindi(a['correct'])}", styles["Hindi"]))
-        story.append(Paragraph(f"<b>व्याख्या :</b> {safe_hindi(a['explanation'])}", styles["Hindi"]))
+        story.append(Paragraph(f"प्रश्न {i} :", style))
+        story.append(Paragraph(safe_hindi(a["question"]), style))
+        story.append(Paragraph(f"सही उत्तर : {safe_hindi(a['correct'])}", style))
+        story.append(Paragraph(f"व्याख्या : {safe_hindi(a['explanation'])}", style))
         story.append(Spacer(1, 12))
 
     def watermark(c, d):
         c.saveState()
-        c.setFont("NotoHindi", 28)
+        c.setFont("HindiFont", 26)
         c.setFillColor(lightgrey)
         c.translate(300, 420)
         c.rotate(45)
@@ -298,6 +377,10 @@ def generate_pdf(uid, exam, topic, attempts, score, total):
 async def pdf_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
+
+    if "exam" not in context.user_data:
+        await safe_edit_or_send(q, "⚠️ कोई active test नहीं मिला।", home_kb())
+        return
 
     file = generate_pdf(
         q.from_user.id,
@@ -314,17 +397,64 @@ async def pdf_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
         filename=file
     )
 
+# ================= ADMIN =================
+async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+
+    cur.execute("SELECT COUNT(*) FROM mcq")
+    mcq_count = cur.fetchone()[0]
+    cur.execute("SELECT COUNT(*) FROM scores")
+    test_count = cur.fetchone()[0]
+
+    await update.message.reply_text(
+        f"🛠 ADMIN PANEL\n\nMCQs: {mcq_count}\nTests: {test_count}\n\n/upload – Upload Excel"
+    )
+
+async def upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+    await update.message.reply_text(
+        "📤 Upload Excel (.xlsx)\nColumns:\nexam, topic, question, a, b, c, d, correct, explanation"
+    )
+
+async def handle_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+
+    file = await update.message.document.get_file()
+    path = "upload.xlsx"
+    await file.download_to_drive(path)
+
+    df = pd.read_excel(path)
+    for _, r in df.iterrows():
+        cur.execute(
+            "INSERT INTO mcq VALUES (NULL,?,?,?,?,?,?,?,?,?)",
+            (r.exam, r.topic, r.question, r.a, r.b, r.c, r.d, r.correct, r.explanation)
+        )
+    conn.commit()
+
+    await update.message.reply_text(f"✅ {len(df)} MCQs uploaded successfully")
+
 # ================= MAIN =================
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("myscore", myscore))
+    app.add_handler(CommandHandler("admin", admin))
+    app.add_handler(CommandHandler("upload", upload))
+
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_excel))
 
     app.add_handler(CallbackQueryHandler(start_new, "^start_new$"))
     app.add_handler(CallbackQueryHandler(exam_select, "^exam_"))
     app.add_handler(CallbackQueryHandler(topic_select, "^topic_"))
     app.add_handler(CallbackQueryHandler(answer, "^ans_"))
+    app.add_handler(CallbackQueryHandler(wrong_only, "^wrong_only$"))
+    app.add_handler(CallbackQueryHandler(wrong_next, "^wrong_next$"))
+    app.add_handler(CallbackQueryHandler(wrong_prev, "^wrong_prev$"))
+    app.add_handler(CallbackQueryHandler(myscore, "^myscore$"))
     app.add_handler(CallbackQueryHandler(pdf_result, "^pdf_result$"))
 
     print("🤖 Bot Running...")
