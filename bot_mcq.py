@@ -1,8 +1,7 @@
 import os
 import sqlite3
 import datetime
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
+from collections import defaultdict
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -13,7 +12,7 @@ from telegram.ext import (
 
 TOKEN = os.getenv("BOT_TOKEN")
 
-# ---------- DATABASE ----------
+# ================= DATABASE =================
 conn = sqlite3.connect("mcq.db", check_same_thread=False)
 cur = conn.cursor()
 
@@ -23,10 +22,7 @@ CREATE TABLE IF NOT EXISTS mcq (
     exam TEXT,
     topic TEXT,
     question TEXT,
-    a TEXT,
-    b TEXT,
-    c TEXT,
-    d TEXT,
+    a TEXT, b TEXT, c TEXT, d TEXT,
     correct TEXT,
     explanation TEXT
 )
@@ -43,88 +39,84 @@ CREATE TABLE IF NOT EXISTS scores (
     test_date TEXT
 )
 """)
+
+cur.execute("""
+CREATE TABLE IF NOT EXISTS topic_stats (
+    user_id INTEGER,
+    topic TEXT,
+    correct INTEGER,
+    wrong INTEGER,
+    PRIMARY KEY (user_id, topic)
+)
+""")
 conn.commit()
 
-# ---------- START ----------
+# ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
+
     kb = [
-        [InlineKeyboardButton("📘 MPPSC", callback_data="exam_MPPSC")],
-        [InlineKeyboardButton("📗 UGC NET", callback_data="exam_NET")],
-        [InlineKeyboardButton("📊 My Score", callback_data="go_myscore")]
+        [InlineKeyboardButton("🧠 Start Test", callback_data="exam_MPPSC")],
+        [InlineKeyboardButton("📊 Topic Analytics", callback_data="topic_stats")]
     ]
 
-    if update.message:
-        await update.message.reply_text(
-            "👋 Welcome to MyScoreCard Bot 🎯\n\nSelect Exam 👇",
-            reply_markup=InlineKeyboardMarkup(kb)
-        )
-    else:
-        await update.callback_query.edit_message_text(
-            "👋 Welcome to MyScoreCard Bot 🎯\n\nSelect Exam 👇",
-            reply_markup=InlineKeyboardMarkup(kb)
-        )
+    await update.message.reply_text(
+        "👋 Welcome to MyScoreCard Bot\n\nChoose an option 👇",
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
 
-# ---------- EXAM ----------
+# ================= EXAM =================
 async def exam_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
-    exam = q.data.split("_")[1]
     context.user_data.clear()
-    context.user_data["exam"] = exam
+    context.user_data["exam"] = "MPPSC"
 
     kb = [
         [InlineKeyboardButton("History", callback_data="topic_History")],
-        [InlineKeyboardButton("Polity", callback_data="topic_Polity")]
+        [InlineKeyboardButton("Polity", callback_data="topic_Polity")],
+        [InlineKeyboardButton("🧠 Smart Adaptive Test", callback_data="adaptive")]
     ]
 
     await q.edit_message_text(
-        f"📘 Exam: {exam}\n\nChoose Topic 👇",
+        "Select Topic 👇",
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
-# ---------- TOPIC ----------
+# ================= TOPIC =================
 async def topic_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
-    context.user_data["topic"] = q.data.split("_")[1]
-    context.user_data["q_no"] = 0
-    context.user_data["score"] = 0
-    context.user_data["attempts"] = []
-    context.user_data["wrong_questions"] = []
-    context.user_data["asked"] = []
-
-    cur.execute(
-        "SELECT COUNT(*) FROM mcq WHERE exam=? AND topic=?",
-        (context.user_data["exam"], context.user_data["topic"])
-    )
-    context.user_data["limit"] = cur.fetchone()[0]
+    context.user_data.update({
+        "topic": q.data.split("_")[1],
+        "score": 0,
+        "q_no": 0,
+        "limit": 10,
+        "asked": [],
+        "attempts": []
+    })
 
     await send_mcq(q, context)
 
-# ---------- SEND MCQ ----------
+# ================= SEND MCQ =================
 async def send_mcq(q, context):
     asked = context.user_data["asked"]
 
     if asked:
         placeholders = ",".join("?" * len(asked))
-        sql = f"""
+        query = f"""
         SELECT * FROM mcq
-        WHERE exam=? AND topic=?
-        AND id NOT IN ({placeholders})
+        WHERE topic=? AND id NOT IN ({placeholders})
         ORDER BY RANDOM() LIMIT 1
         """
-        params = [context.user_data["exam"], context.user_data["topic"]] + asked
+        params = [context.user_data["topic"]] + asked
     else:
-        sql = """
-        SELECT * FROM mcq
-        WHERE exam=? AND topic=?
-        ORDER BY RANDOM() LIMIT 1
-        """
-        params = [context.user_data["exam"], context.user_data["topic"]]
+        query = "SELECT * FROM mcq WHERE topic=? ORDER BY RANDOM() LIMIT 1"
+        params = [context.user_data["topic"]]
 
-    cur.execute(sql, params)
+    cur.execute(query, params)
     mcq = cur.fetchone()
 
     if not mcq:
@@ -132,46 +124,59 @@ async def send_mcq(q, context):
         return
 
     context.user_data["asked"].append(mcq[0])
-    context.user_data["current"] = mcq
+    context.user_data["correct"] = mcq[8]
+    context.user_data["question"] = mcq
 
     kb = [
-        [InlineKeyboardButton("A", callback_data="ans_A"),
-         InlineKeyboardButton("B", callback_data="ans_B")],
-        [InlineKeyboardButton("C", callback_data="ans_C"),
-         InlineKeyboardButton("D", callback_data="ans_D")]
+        [InlineKeyboardButton("A", callback_data="A"),
+         InlineKeyboardButton("B", callback_data="B")],
+        [InlineKeyboardButton("C", callback_data="C"),
+         InlineKeyboardButton("D", callback_data="D")]
     ]
 
     await q.edit_message_text(
-        f"❓ Q{context.user_data['q_no']+1}\n\n"
-        f"{mcq[3]}\n\n"
-        f"A. {mcq[4]}\n"
-        f"B. {mcq[5]}\n"
-        f"C. {mcq[6]}\n"
-        f"D. {mcq[7]}",
+        f"Q{context.user_data['q_no']+1}. {mcq[3]}\n\n"
+        f"A. {mcq[4]}\nB. {mcq[5]}\nC. {mcq[6]}\nD. {mcq[7]}",
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
-# ---------- ANSWER ----------
+# ================= ANSWER =================
 async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
-    selected = q.data.split("_")[1]
-    mcq = context.user_data["current"]
+    selected = q.data
+    mcq = context.user_data["question"]
+    topic = mcq[2]
+    uid = q.from_user.id
 
-    attempt = {
-        "question": mcq[3],
-        "options": {"A": mcq[4], "B": mcq[5], "C": mcq[6], "D": mcq[7]},
-        "selected": selected,
-        "correct": mcq[8],
-        "explanation": mcq[9]
-    }
-    context.user_data["attempts"].append(attempt)
+    correct = selected == mcq[8]
 
-    if selected == mcq[8]:
+    if correct:
         context.user_data["score"] += 1
+
+    # topic stats
+    cur.execute(
+        "SELECT correct, wrong FROM topic_stats WHERE user_id=? AND topic=?",
+        (uid, topic)
+    )
+    row = cur.fetchone()
+
+    if row:
+        c, w = row
+        c += 1 if correct else 0
+        w += 0 if correct else 1
+        cur.execute(
+            "UPDATE topic_stats SET correct=?, wrong=? WHERE user_id=? AND topic=?",
+            (c, w, uid, topic)
+        )
     else:
-        context.user_data["wrong_questions"].append(attempt)
+        cur.execute(
+            "INSERT INTO topic_stats VALUES (?,?,?,?)",
+            (uid, topic, 1 if correct else 0, 0 if correct else 1)
+        )
+
+    conn.commit()
 
     context.user_data["q_no"] += 1
 
@@ -181,118 +186,88 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await send_mcq(q, context)
 
-# ---------- FINISH TEST ----------
+# ================= FINISH =================
 async def finish_test(q, context):
     score = context.user_data["score"]
     total = context.user_data["q_no"]
 
-    cur.execute(
-        "INSERT INTO scores VALUES (NULL,?,?,?,?,?)",
-        (
-            q.from_user.id,
-            context.user_data["exam"],
-            context.user_data["topic"],
-            score,
-            total,
-            datetime.date.today().isoformat()
-        )
-    )
-    conn.commit()
-
-    acc = round((score / total) * 100, 2)
-
     await q.edit_message_text(
-        f"🎯 Test Completed ✅\n\n"
-        f"Score: {score}/{total}\n"
-        f"Accuracy: {acc}%",
+        f"✅ Test Completed\n\nScore: {score}/{total}",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔍 Review Answers", callback_data="review_0")],
-            [InlineKeyboardButton("❌ Practice Wrong Only", callback_data="wrong_only")],
-            [InlineKeyboardButton("🔁 Start New Test", callback_data="start_new")]
+            [InlineKeyboardButton("📊 Topic Analytics", callback_data="topic_stats")],
+            [InlineKeyboardButton("🔁 New Test", callback_data="exam_MPPSC")]
         ])
     )
 
-# ---------- REVIEW ----------
-async def review_answers(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ================= TOPIC ANALYTICS =================
+async def topic_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
-    idx = int(q.data.split("_")[1])
-    attempts = context.user_data["attempts"]
-
-    if idx >= len(attempts):
-        await start(update, context)
-        return
-
-    a = attempts[idx]
-
-    kb = []
-    if idx + 1 < len(attempts):
-        kb.append([InlineKeyboardButton("Next ▶", callback_data=f"review_{idx+1}")])
-
-    await q.edit_message_text(
-        f"❓ {a['question']}\n\n"
-        f"Your: {a['selected']} | Correct: {a['correct']}\n\n"
-        f"{a['explanation']}",
-        reply_markup=InlineKeyboardMarkup(kb)
-    )
-
-# ---------- WRONG ONLY ----------
-async def wrong_only(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-
-    wrongs = context.user_data["wrong_questions"]
-
-    if not wrongs:
-        await q.edit_message_text("🎉 No wrong questions!")
-        return
-
-    text = "❌ Wrong Questions Review\n\n"
-    for i, w in enumerate(wrongs, 1):
-        text += f"{i}. {w['question']}\nAns: {w['correct']}\n\n"
-
-    await q.edit_message_text(text)
-
-# ---------- MY SCORE ----------
-async def go_myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-
+    uid = q.from_user.id
     cur.execute(
-        "SELECT exam,topic,score,total,test_date FROM scores WHERE user_id=? ORDER BY id DESC LIMIT 5",
-        (q.from_user.id,)
+        "SELECT topic, correct, wrong FROM topic_stats WHERE user_id=?",
+        (uid,)
     )
     rows = cur.fetchall()
 
     if not rows:
-        await q.edit_message_text("No history found.")
+        await q.edit_message_text("No data available yet.")
         return
 
-    msg = "📊 My Scores\n\n"
-    for r in rows:
-        msg += f"{r[0]} | {r[1]} → {r[2]}/{r[3]} ({r[4]})\n"
+    msg = "📊 Topic-Wise Performance\n\n"
+    for t, c, w in rows:
+        total = c + w
+        acc = round((c / total) * 100, 2)
+        msg += f"{t} → {acc}% ({c}/{total})\n"
 
     await q.edit_message_text(msg)
 
-# ---------- START NEW ----------
-async def start_new_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await start(update, context)
+# ================= ADAPTIVE TEST =================
+async def adaptive_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
 
-# ---------- MAIN ----------
+    uid = q.from_user.id
+    cur.execute(
+        "SELECT topic, correct, wrong FROM topic_stats WHERE user_id=?",
+        (uid,)
+    )
+    rows = cur.fetchall()
+
+    if not rows:
+        await q.edit_message_text("Attempt some tests first.")
+        return
+
+    weighted = []
+    for t, c, w in rows:
+        acc = c / max(1, (c + w))
+        weight = 3 if acc < 0.5 else 2 if acc < 0.75 else 1
+        weighted.extend([t] * weight)
+
+    context.user_data.update({
+        "topic": weighted[0],
+        "score": 0,
+        "q_no": 0,
+        "limit": 10,
+        "asked": [],
+        "attempts": []
+    })
+
+    await send_mcq(q, context)
+
+# ================= MAIN =================
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(exam_select, "^exam_"))
     app.add_handler(CallbackQueryHandler(topic_select, "^topic_"))
-    app.add_handler(CallbackQueryHandler(answer, "^ans_"))
-    app.add_handler(CallbackQueryHandler(review_answers, "^review_"))
-    app.add_handler(CallbackQueryHandler(wrong_only, "^wrong_only$"))
-    app.add_handler(CallbackQueryHandler(start_new_test, "^start_new$"))
-    app.add_handler(CallbackQueryHandler(go_myscore, "^go_myscore$"))
+    app.add_handler(CallbackQueryHandler(answer, "^[ABCD]$"))
+    app.add_handler(CallbackQueryHandler(topic_stats, "^topic_stats$"))
+    app.add_handler(CallbackQueryHandler(adaptive_start, "^adaptive$"))
 
-    print("🤖 Bot Running...")
+    print("🤖 Bot Running with Analytics + Adaptive Test")
     app.run_polling()
 
 if __name__ == "__main__":
