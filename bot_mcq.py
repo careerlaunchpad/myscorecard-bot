@@ -20,7 +20,7 @@ from telegram.ext import (
 
 # ================= CONFIG =================
 TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_IDS = [1977205811]   # 👈 अपनी Telegram numeric ID
+ADMIN_IDS = [1977205811]  # 👈 अपनी Telegram numeric ID
 
 # ================= DATABASE =================
 conn = sqlite3.connect("mcq.db", check_same_thread=False)
@@ -70,7 +70,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
-# ================= START NEW (BUG FIXED) =================
+# ================= START NEW =================
 async def start_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -90,6 +90,7 @@ async def start_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def exam_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
+
     context.user_data.clear()
     context.user_data["exam"] = q.data.split("_")[1]
 
@@ -301,6 +302,68 @@ async def myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ])
     )
 
+# ================= PDF =================
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import A4
+
+def generate_pdf(uid, exam, topic, attempts, score, total):
+    file = f"result_{uid}.pdf"
+    c = canvas.Canvas(file, pagesize=A4)
+    y = 800
+
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(50, y, "MyScoreCard Result")
+    y -= 30
+
+    c.setFont("Helvetica", 11)
+    c.drawString(50, y, f"Exam: {exam}")
+    y -= 15
+    c.drawString(50, y, f"Topic: {topic}")
+    y -= 15
+    c.drawString(50, y, f"Score: {score}/{total}")
+    y -= 30
+
+    for i, a in enumerate(attempts, 1):
+        if y < 100:
+            c.showPage()
+            y = 800
+
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(50, y, f"Q{i}. {a['question']}")
+        y -= 14
+
+        c.setFont("Helvetica", 9)
+        for k, v in a["options"].items():
+            c.drawString(60, y, f"{k}. {v}")
+            y -= 12
+
+        c.drawString(60, y, f"Correct: {a['correct']}")
+        y -= 12
+        c.drawString(60, y, f"Explanation: {a['explanation']}")
+        y -= 20
+
+    c.save()
+    return file
+
+async def pdf_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    file = generate_pdf(
+        q.from_user.id,
+        context.user_data["exam"],
+        context.user_data["topic"],
+        context.user_data["attempts"],
+        context.user_data["score"],
+        context.user_data["q_no"]
+    )
+
+    await context.bot.send_document(
+        chat_id=q.from_user.id,
+        document=open(file, "rb"),
+        filename="MyScoreCard_Result.pdf"
+    )
+
 # ================= ADMIN =================
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
@@ -358,6 +421,8 @@ def main():
     app.add_handler(CallbackQueryHandler(answer, "^ans_"))
     app.add_handler(CallbackQueryHandler(wrong_only, "^wrong_only$"))
     app.add_handler(CallbackQueryHandler(wrong_next, "^wrong_next$"))
+    app.add_handler(CallbackQueryHandler(myscore, "^myscore$"))
+    app.add_handler(CallbackQueryHandler(pdf_result, "^pdf_result$"))
 
     print("🤖 MyScoreCard Bot Running...")
     app.run_polling()
