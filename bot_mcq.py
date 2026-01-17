@@ -18,8 +18,8 @@ from telegram.ext import (
 )
 
 # ================= CONFIG =================
-TOKEN = os.getenv("BOT_TOKEN")  # set env variable
-ADMIN_IDS = [1977205811]        # 👈 अपनी Telegram numeric ID
+TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_IDS = [1977205811]  # 👈 अपनी Telegram numeric ID
 
 # ================= DATABASE =================
 conn = sqlite3.connect("mcq.db", check_same_thread=False)
@@ -64,23 +64,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📕 UGC NET", callback_data="exam_NET")]
     ]
     await update.message.reply_text(
-        "👋 *Welcome to MyScoreCard Bot*\n\nSelect Exam 👇",
+        "👋 Welcome to *MyScoreCard Bot* 🎯\n\nSelect Exam 👇",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
-# ================= START NEW (SAFE CALLBACK) =================
+# ================= START NEW =================
 async def start_new_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
-
     context.user_data.clear()
 
     kb = [
         [InlineKeyboardButton("📘 MPPSC", callback_data="exam_MPPSC")],
         [InlineKeyboardButton("📕 UGC NET", callback_data="exam_NET")]
     ]
-
     await q.edit_message_text(
         "🔁 *Start New Test*\n\nSelect Exam 👇",
         parse_mode="Markdown",
@@ -99,10 +97,7 @@ async def exam_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("History", callback_data="topic_History")],
         [InlineKeyboardButton("Polity", callback_data="topic_Polity")]
     ]
-    await q.edit_message_text(
-        "Choose Topic 👇",
-        reply_markup=InlineKeyboardMarkup(kb)
-    )
+    await q.edit_message_text("Choose Topic 👇", reply_markup=InlineKeyboardMarkup(kb))
 
 # ================= TOPIC =================
 async def topic_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -158,7 +153,6 @@ async def send_mcq(q, context):
 
     mcq = cur.fetchone()
 
-    # ✅ FINAL SAFETY: no freeze
     if not mcq:
         await show_result(q, context)
         return
@@ -211,7 +205,7 @@ async def show_result(q, context):
     cur.execute(
         """
         INSERT INTO scores (user_id, exam, topic, score, total, test_date)
-        VALUES (?,?,?,?,?,?)
+        VALUES (?, ?, ?, ?, ?, ?)
         """,
         (
             q.from_user.id,
@@ -233,7 +227,7 @@ async def show_result(q, context):
         ])
     )
 
-# ================= MY SCORE =================
+# ================= MY SCORE (COMMAND) =================
 async def myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     cur.execute(
@@ -258,6 +252,34 @@ async def myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(msg, parse_mode="Markdown")
 
+# ================= MY SCORE (CALLBACK) =================
+async def myscore_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    uid = q.from_user.id
+    cur.execute(
+        """
+        SELECT exam, topic, score, total, test_date
+        FROM scores
+        WHERE user_id=?
+        ORDER BY id DESC
+        LIMIT 5
+        """,
+        (uid,)
+    )
+    rows = cur.fetchall()
+
+    if not rows:
+        await q.edit_message_text("❌ No score history found.")
+        return
+
+    msg = "📊 *Your Recent Tests*\n\n"
+    for r in rows:
+        msg += f"{r[0]} | {r[1]} → {r[2]}/{r[3]} ({r[4]})\n"
+
+    await q.edit_message_text(msg, parse_mode="Markdown")
+
 # ================= ADMIN =================
 async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
@@ -281,6 +303,7 @@ async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def upload_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
+
     await update.message.reply_text(
         "📤 Send Excel (.xlsx)\n\n"
         "Columns:\nexam, topic, question, a, b, c, d, correct, explanation"
@@ -300,9 +323,8 @@ async def handle_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for _, r in df.iterrows():
         cur.execute(
             """
-            INSERT INTO mcq
-            (exam, topic, question, a, b, c, d, correct, explanation)
-            VALUES (?,?,?,?,?,?,?,?,?)
+            INSERT INTO mcq (exam, topic, question, a, b, c, d, correct, explanation)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 r.exam, r.topic, r.question,
@@ -326,6 +348,7 @@ def main():
     app.add_handler(MessageHandler(filters.Document.ALL, handle_excel))
 
     app.add_handler(CallbackQueryHandler(start_new_test, "^start_new$"))
+    app.add_handler(CallbackQueryHandler(myscore_callback, "^myscore$"))
     app.add_handler(CallbackQueryHandler(exam_select, "^exam_"))
     app.add_handler(CallbackQueryHandler(topic_select, "^topic_"))
     app.add_handler(CallbackQueryHandler(answer, "^ans_"))
