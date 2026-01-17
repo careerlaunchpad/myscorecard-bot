@@ -1,4 +1,3 @@
-# ================= IMPORTS =================
 import os
 import sqlite3
 import datetime
@@ -14,10 +13,11 @@ from telegram.ext import (
     ContextTypes,
     filters
 )
+from telegram.error import BadRequest
 
 # ================= CONFIG =================
-TOKEN = os.getenv("BOT_TOKEN")   # Telegram Bot Token
-ADMIN_IDS = [1977205811]         # अपनी numeric Telegram ID
+TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_IDS = [1977205811]  # 👈 अपना Telegram numeric ID
 
 # ================= DATABASE =================
 conn = sqlite3.connect("mcq.db", check_same_thread=False)
@@ -54,14 +54,24 @@ conn.commit()
 # ================= SAFE HELPERS =================
 async def safe_edit_or_send(q, text, reply_markup=None):
     try:
-        await q.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
-    except Exception:
-        await q.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+        await q.edit_message_text(
+            text=text,
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
+        )
+    except BadRequest as e:
+        if "Message is not modified" in str(e):
+            return
+        await q.message.reply_text(
+            text=text,
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
+        )
 
 def safe_hindi(text):
     if not text:
         return ""
-    return unicodedata.normalize("NFKC", text)
+    return unicodedata.normalize("NFKC", str(text))
 
 def is_admin(uid):
     return uid in ADMIN_IDS
@@ -179,8 +189,11 @@ async def send_mcq(q, context):
     await safe_edit_or_send(
         q,
         f"❓ *Q{context.user_data['q_no']+1}/{context.user_data['limit']}*\n\n"
-        f"{mcq[3]}\n\n"
-        f"A. {mcq[4]}\nB. {mcq[5]}\nC. {mcq[6]}\nD. {mcq[7]}",
+        f"{safe_hindi(mcq[3])}\n\n"
+        f"A. {safe_hindi(mcq[4])}\n"
+        f"B. {safe_hindi(mcq[5])}\n"
+        f"C. {safe_hindi(mcq[6])}\n"
+        f"D. {safe_hindi(mcq[7])}",
         InlineKeyboardMarkup([
             [InlineKeyboardButton("A", callback_data="ans_A"),
              InlineKeyboardButton("B", callback_data="ans_B")],
@@ -257,6 +270,10 @@ async def show_wrong(q, context):
     idx = context.user_data["widx"]
     wrong = context.user_data["wrong"]
 
+    if idx < 0:
+        idx = 0
+        context.user_data["widx"] = 0
+
     if idx >= len(wrong):
         await safe_edit_or_send(q, "✅ Wrong Practice Completed", home_kb())
         return
@@ -264,9 +281,14 @@ async def show_wrong(q, context):
     w = wrong[idx]
     await safe_edit_or_send(
         q,
-        f"❌ *Wrong {idx+1}/{len(wrong)}*\n\n{w[3]}\n\n"
-        f"A. {w[4]}\nB. {w[5]}\nC. {w[6]}\nD. {w[7]}\n\n"
-        f"✅ Correct: *{w[8]}*\n\n📘 {w[9]}",
+        f"❌ *Wrong {idx+1}/{len(wrong)}*\n\n"
+        f"{safe_hindi(w[3])}\n\n"
+        f"A. {safe_hindi(w[4])}\n"
+        f"B. {safe_hindi(w[5])}\n"
+        f"C. {safe_hindi(w[6])}\n"
+        f"D. {safe_hindi(w[7])}\n\n"
+        f"✅ Correct: *{safe_hindi(w[8])}*\n\n"
+        f"📘 {safe_hindi(w[9])}",
         InlineKeyboardMarkup([
             [
                 InlineKeyboardButton("⬅️ Prev", callback_data="wrong_prev"),
@@ -319,52 +341,51 @@ async def myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await send(msg, parse_mode="Markdown", reply_markup=home_kb())
 
-# ================= PDF (REAL HINDI – STABLE) =================
+# ================= PDF (REAL HINDI) =================
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.colors import lightgrey
 
-pdfmetrics.registerFont(TTFont("HindiFont", "NotoSansDevanagari-Regular.ttf"))
+pdfmetrics.registerFont(TTFont("NotoHindi", "NotoSansDevanagari-Regular.ttf"))
 
 def generate_pdf(uid, exam, topic, attempts, score, total):
     file = f"MyScoreCard_Result_{uid}.pdf"
-
     doc = SimpleDocTemplate(file, pagesize=A4, leftMargin=40, rightMargin=40)
 
-    style = ParagraphStyle(
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(
         name="Hindi",
-        fontName="HindiFont",
+        fontName="NotoHindi",
         fontSize=11,
         leading=16
-    )
-    title = ParagraphStyle(
-        name="Title",
-        fontName="HindiFont",
+    ))
+    styles.add(ParagraphStyle(
+        name="HindiTitle",
+        fontName="NotoHindi",
         fontSize=14,
         leading=20
-    )
+    ))
 
     story = []
-    story.append(Paragraph("MyScoreCard – टेस्ट परिणाम", title))
+    story.append(Paragraph("MyScoreCard – टेस्ट परिणाम", styles["HindiTitle"]))
     story.append(Spacer(1, 10))
-    story.append(Paragraph(f"परीक्षा : {safe_hindi(exam)}", style))
-    story.append(Paragraph(f"विषय : {safe_hindi(topic)}", style))
-    story.append(Paragraph(f"स्कोर : {score}/{total}", style))
-    story.append(Spacer(1, 15))
+    story.append(Paragraph(f"परीक्षा : {safe_hindi(exam)}", styles["Hindi"]))
+    story.append(Paragraph(f"विषय : {safe_hindi(topic)}", styles["Hindi"]))
+    story.append(Paragraph(f"स्कोर : {score}/{total}", styles["Hindi"]))
+    story.append(Spacer(1, 14))
 
     for i, a in enumerate(attempts, 1):
-        story.append(Paragraph(f"प्रश्न {i} :", style))
-        story.append(Paragraph(safe_hindi(a["question"]), style))
-        story.append(Paragraph(f"सही उत्तर : {safe_hindi(a['correct'])}", style))
-        story.append(Paragraph(f"व्याख्या : {safe_hindi(a['explanation'])}", style))
+        story.append(Paragraph(f"<b>प्रश्न {i} :</b> {safe_hindi(a['question'])}", styles["Hindi"]))
+        story.append(Paragraph(f"<b>सही उत्तर :</b> {safe_hindi(a['correct'])}", styles["Hindi"]))
+        story.append(Paragraph(f"<b>व्याख्या :</b> {safe_hindi(a['explanation'])}", styles["Hindi"]))
         story.append(Spacer(1, 12))
 
     def watermark(c, d):
         c.saveState()
-        c.setFont("HindiFont", 26)
+        c.setFont("NotoHindi", 28)
         c.setFillColor(lightgrey)
         c.translate(300, 420)
         c.rotate(45)
@@ -379,7 +400,7 @@ async def pdf_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
 
     if "exam" not in context.user_data:
-        await safe_edit_or_send(q, "⚠️ कोई active test नहीं मिला।", home_kb())
+        await safe_edit_or_send(q, "⚠️ No active test found.", home_kb())
         return
 
     file = generate_pdf(
@@ -397,18 +418,24 @@ async def pdf_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
         filename=file
     )
 
+    await context.bot.send_message(
+        chat_id=q.from_user.id,
+        text="📄 PDF Generated Successfully",
+        reply_markup=home_kb()
+    )
+
 # ================= ADMIN =================
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
 
     cur.execute("SELECT COUNT(*) FROM mcq")
-    mcq_count = cur.fetchone()[0]
+    mcqs = cur.fetchone()[0]
     cur.execute("SELECT COUNT(*) FROM scores")
-    test_count = cur.fetchone()[0]
+    tests = cur.fetchone()[0]
 
     await update.message.reply_text(
-        f"🛠 ADMIN PANEL\n\nMCQs: {mcq_count}\nTests: {test_count}\n\n/upload – Upload Excel"
+        f"🛠 ADMIN PANEL\n\nMCQs: {mcqs}\nTests: {tests}\n\n/upload – Upload Excel"
     )
 
 async def upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -457,7 +484,7 @@ def main():
     app.add_handler(CallbackQueryHandler(myscore, "^myscore$"))
     app.add_handler(CallbackQueryHandler(pdf_result, "^pdf_result$"))
 
-    print("🤖 Bot Running...")
+    print("🤖 MyScoreCard Bot Running...")
     app.run_polling()
 
 if __name__ == "__main__":
