@@ -13,8 +13,8 @@ from telegram.ext import (
 )
 
 # ================= CONFIG =================
-TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_IDS = [1977205811]  # your Telegram ID
+TOKEN = os.getenv("BOT_TOKEN")   # Render / Railway / Local env
+ADMIN_IDS = [1977205811]         # 👈 अपनी Telegram ID
 
 # ================= DATABASE =================
 conn = sqlite3.connect("mcq.db", check_same_thread=False)
@@ -63,7 +63,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
-# ================= START NEW (CALLBACK SAFE) =================
+# ================= START NEW (SAFE) =================
 async def start_new_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -114,7 +114,8 @@ async def send_mcq(q, context):
     if asked:
         ph = ",".join("?" * len(asked))
         cur.execute(
-            f"SELECT * FROM mcq WHERE exam=? AND topic=? AND id NOT IN ({ph}) ORDER BY RANDOM() LIMIT 1",
+            f"SELECT * FROM mcq WHERE exam=? AND topic=? "
+            f"AND id NOT IN ({ph}) ORDER BY RANDOM() LIMIT 1",
             [exam, topic] + asked
         )
     else:
@@ -156,6 +157,11 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["score"] += 1
 
     context.user_data["q_no"] += 1
+
+    if context.user_data["q_no"] >= context.user_data["limit"]:
+        await show_result(q, context)
+        return
+
     await send_mcq(q, context)
 
 # ================= RESULT =================
@@ -176,18 +182,19 @@ async def show_result(q, context):
     conn.commit()
 
     await q.edit_message_text(
-        f"🎯 Test Completed\n\nScore: {s}/{t}",
+        f"🎯 Test Completed ✅\n\nScore: {s}/{t}",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("🔁 Start New Test", callback_data="start_new")],
             [InlineKeyboardButton("📊 My Score", callback_data="myscore")]
         ])
     )
 
-# ================= MY SCORE =================
+# ================= MY SCORE (COMMAND) =================
 async def myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     cur.execute(
-        "SELECT exam, topic, score, total, test_date FROM scores WHERE user_id=? ORDER BY id DESC LIMIT 5",
+        "SELECT exam, topic, score, total, test_date "
+        "FROM scores WHERE user_id=? ORDER BY id DESC LIMIT 5",
         (uid,)
     )
     rows = cur.fetchall()
@@ -202,7 +209,30 @@ async def myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(msg)
 
-# ================= ADMIN =================
+# ================= MY SCORE (CALLBACK) =================
+async def myscore_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    uid = q.from_user.id
+    cur.execute(
+        "SELECT exam, topic, score, total, test_date "
+        "FROM scores WHERE user_id=? ORDER BY id DESC LIMIT 5",
+        (uid,)
+    )
+    rows = cur.fetchall()
+
+    if not rows:
+        await q.edit_message_text("❌ No score history found.")
+        return
+
+    msg = "📊 Your Recent Tests\n\n"
+    for r in rows:
+        msg += f"{r[0]} | {r[1]} → {r[2]}/{r[3]} ({r[4]})\n"
+
+    await q.edit_message_text(msg)
+
+# ================= ADMIN DASHBOARD =================
 async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
@@ -214,16 +244,19 @@ async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         f"🛠 ADMIN DASHBOARD\n\n"
-        f"📚 MCQs: {mcq}\n"
-        f"📝 Tests: {tests}\n\n"
-        f"/upload – Upload Excel"
+        f"📚 Total MCQs: {mcq}\n"
+        f"📝 Tests Conducted: {tests}\n\n"
+        f"/upload – Upload MCQs via Excel"
     )
 
 # ================= EXCEL UPLOAD =================
 async def upload_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
-    await update.message.reply_text("📤 Send Excel (.xlsx)")
+    await update.message.reply_text(
+        "📤 Send Excel (.xlsx)\n\n"
+        "Columns:\nexam, topic, question, a, b, c, d, correct, explanation"
+    )
 
 async def handle_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
@@ -242,7 +275,7 @@ async def handle_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     conn.commit()
 
-    await update.message.reply_text(f"✅ {len(df)} MCQs uploaded")
+    await update.message.reply_text(f"✅ {len(df)} MCQs uploaded successfully!")
 
 # ================= MAIN =================
 def main():
@@ -256,6 +289,7 @@ def main():
     app.add_handler(MessageHandler(filters.Document.ALL, handle_excel))
 
     app.add_handler(CallbackQueryHandler(start_new_test, "^start_new$"))
+    app.add_handler(CallbackQueryHandler(myscore_callback, "^myscore$"))
     app.add_handler(CallbackQueryHandler(exam_select, "^exam_"))
     app.add_handler(CallbackQueryHandler(topic_select, "^topic_"))
     app.add_handler(CallbackQueryHandler(answer, "^ans_"))
