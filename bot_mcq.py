@@ -2,7 +2,12 @@ import os
 import sqlite3
 import datetime
 import pandas as pd
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Document
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Document
+)
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -13,8 +18,8 @@ from telegram.ext import (
 )
 
 # ================= CONFIG =================
-TOKEN = os.getenv("BOT_TOKEN")   # Render / Railway / Local env
-ADMIN_IDS = [1977205811]         # 👈 अपनी Telegram ID
+TOKEN = os.getenv("BOT_TOKEN")  # Railway / local env
+ADMIN_IDS = [1977205811]        # 👈 अपनी Telegram numeric ID
 
 # ================= DATABASE =================
 conn = sqlite3.connect("mcq.db", check_same_thread=False)
@@ -49,7 +54,7 @@ CREATE TABLE IF NOT EXISTS scores (
 conn.commit()
 
 # ================= HELPERS =================
-def is_admin(uid):
+def is_admin(uid: int) -> bool:
     return uid in ADMIN_IDS
 
 # ================= START =================
@@ -59,21 +64,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📕 UGC NET", callback_data="exam_NET")]
     ]
     await update.message.reply_text(
-        "👋 Welcome to MyScoreCard Bot 🎯\n\nSelect Exam 👇",
+        "👋 Welcome to *MyScoreCard Bot* 🎯\n\nSelect Exam 👇",
+        parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
-# ================= START NEW (SAFE) =================
+# ================= START NEW (CALLBACK SAFE) =================
 async def start_new_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
+
+    context.user_data.clear()
 
     kb = [
         [InlineKeyboardButton("📘 MPPSC", callback_data="exam_MPPSC")],
         [InlineKeyboardButton("📕 UGC NET", callback_data="exam_NET")]
     ]
     await q.edit_message_text(
-        "🔁 Start New Test\n\nSelect Exam 👇",
+        "🔁 *Start New Test*\n\nSelect Exam 👇",
+        parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
@@ -89,20 +98,39 @@ async def exam_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("History", callback_data="topic_History")],
         [InlineKeyboardButton("Polity", callback_data="topic_Polity")]
     ]
-    await q.edit_message_text("Choose Topic 👇", reply_markup=InlineKeyboardMarkup(kb))
+    await q.edit_message_text(
+        "Choose Topic 👇",
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
 
 # ================= TOPIC =================
 async def topic_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
+    exam = context.user_data["exam"]
+    topic = q.data.split("_")[1]
+
+    # total questions in DB
+    cur.execute(
+        "SELECT COUNT(*) FROM mcq WHERE exam=? AND topic=?",
+        (exam, topic)
+    )
+    total_q = cur.fetchone()[0]
+
+    if total_q == 0:
+        await q.edit_message_text("❌ No questions available for this topic.")
+        return
+
     context.user_data.update({
-        "topic": q.data.split("_")[1],
+        "topic": topic,
         "score": 0,
         "q_no": 0,
-        "limit": 10,
-        "asked": []
+        "asked": [],
+        # 🔴 MOST IMPORTANT LINE (FIX)
+        "limit": min(10, total_q)
     })
+
     await send_mcq(q, context)
 
 # ================= SEND MCQ =================
@@ -114,8 +142,13 @@ async def send_mcq(q, context):
     if asked:
         ph = ",".join("?" * len(asked))
         cur.execute(
-            f"SELECT * FROM mcq WHERE exam=? AND topic=? "
-            f"AND id NOT IN ({ph}) ORDER BY RANDOM() LIMIT 1",
+            f"""
+            SELECT * FROM mcq
+            WHERE exam=? AND topic=?
+            AND id NOT IN ({ph})
+            ORDER BY RANDOM()
+            LIMIT 1
+            """,
             [exam, topic] + asked
         )
     else:
@@ -125,6 +158,8 @@ async def send_mcq(q, context):
         )
 
     mcq = cur.fetchone()
+
+    # ✅ FINAL GUARD: auto finish
     if not mcq:
         await show_result(q, context)
         return
@@ -140,8 +175,13 @@ async def send_mcq(q, context):
     ]
 
     await q.edit_message_text(
-        f"❓ Q{context.user_data['q_no']+1}\n{mcq[3]}\n\n"
-        f"A. {mcq[4]}\nB. {mcq[5]}\nC. {mcq[6]}\nD. {mcq[7]}",
+        f"❓ *Q{context.user_data['q_no']+1}/{context.user_data['limit']}*\n\n"
+        f"{mcq[3]}\n\n"
+        f"A. {mcq[4]}\n"
+        f"B. {mcq[5]}\n"
+        f"C. {mcq[6]}\n"
+        f"D. {mcq[7]}",
+        parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
@@ -166,8 +206,8 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= RESULT =================
 async def show_result(q, context):
-    s = context.user_data["score"]
-    t = context.user_data["q_no"]
+    score = context.user_data["score"]
+    total = context.user_data["q_no"]
 
     cur.execute(
         "INSERT INTO scores VALUES (NULL,?,?,?,?,?)",
@@ -175,26 +215,34 @@ async def show_result(q, context):
             q.from_user.id,
             context.user_data["exam"],
             context.user_data["topic"],
-            s, t,
+            score,
+            total,
             datetime.date.today().isoformat()
         )
     )
     conn.commit()
 
     await q.edit_message_text(
-        f"🎯 Test Completed ✅\n\nScore: {s}/{t}",
+        f"🎯 *Test Completed*\n\n"
+        f"Score: *{score}/{total}*",
+        parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("🔁 Start New Test", callback_data="start_new")],
             [InlineKeyboardButton("📊 My Score", callback_data="myscore")]
         ])
     )
 
-# ================= MY SCORE (COMMAND) =================
+# ================= MY SCORE =================
 async def myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     cur.execute(
-        "SELECT exam, topic, score, total, test_date "
-        "FROM scores WHERE user_id=? ORDER BY id DESC LIMIT 5",
+        """
+        SELECT exam, topic, score, total, test_date
+        FROM scores
+        WHERE user_id=?
+        ORDER BY id DESC
+        LIMIT 5
+        """,
         (uid,)
     )
     rows = cur.fetchall()
@@ -203,50 +251,29 @@ async def myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ No score history found.")
         return
 
-    msg = "📊 Your Recent Tests\n\n"
+    msg = "📊 *Your Recent Tests*\n\n"
     for r in rows:
         msg += f"{r[0]} | {r[1]} → {r[2]}/{r[3]} ({r[4]})\n"
 
-    await update.message.reply_text(msg)
+    await update.message.reply_text(msg, parse_mode="Markdown")
 
-# ================= MY SCORE (CALLBACK) =================
-async def myscore_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-
-    uid = q.from_user.id
-    cur.execute(
-        "SELECT exam, topic, score, total, test_date "
-        "FROM scores WHERE user_id=? ORDER BY id DESC LIMIT 5",
-        (uid,)
-    )
-    rows = cur.fetchall()
-
-    if not rows:
-        await q.edit_message_text("❌ No score history found.")
-        return
-
-    msg = "📊 Your Recent Tests\n\n"
-    for r in rows:
-        msg += f"{r[0]} | {r[1]} → {r[2]}/{r[3]} ({r[4]})\n"
-
-    await q.edit_message_text(msg)
-
-# ================= ADMIN DASHBOARD =================
+# ================= ADMIN =================
 async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
 
     cur.execute("SELECT COUNT(*) FROM mcq")
-    mcq = cur.fetchone()[0]
+    mcqs = cur.fetchone()[0]
+
     cur.execute("SELECT COUNT(*) FROM scores")
     tests = cur.fetchone()[0]
 
     await update.message.reply_text(
-        f"🛠 ADMIN DASHBOARD\n\n"
-        f"📚 Total MCQs: {mcq}\n"
-        f"📝 Tests Conducted: {tests}\n\n"
-        f"/upload – Upload MCQs via Excel"
+        f"🛠 *ADMIN DASHBOARD*\n\n"
+        f"📚 MCQs: {mcqs}\n"
+        f"📝 Tests: {tests}\n\n"
+        f"/upload – Upload Excel",
+        parse_mode="Markdown"
     )
 
 # ================= EXCEL UPLOAD =================
@@ -268,14 +295,19 @@ async def handle_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await file.download_to_drive(path)
 
     df = pd.read_excel(path)
+
     for _, r in df.iterrows():
         cur.execute(
             "INSERT INTO mcq VALUES (NULL,?,?,?,?,?,?,?,?,?)",
-            (r.exam, r.topic, r.question, r.a, r.b, r.c, r.d, r.correct, r.explanation)
+            (
+                r.exam, r.topic, r.question,
+                r.a, r.b, r.c, r.d,
+                r.correct, r.explanation
+            )
         )
     conn.commit()
 
-    await update.message.reply_text(f"✅ {len(df)} MCQs uploaded successfully!")
+    await update.message.reply_text(f"✅ {len(df)} MCQs uploaded successfully")
 
 # ================= MAIN =================
 def main():
@@ -289,12 +321,11 @@ def main():
     app.add_handler(MessageHandler(filters.Document.ALL, handle_excel))
 
     app.add_handler(CallbackQueryHandler(start_new_test, "^start_new$"))
-    app.add_handler(CallbackQueryHandler(myscore_callback, "^myscore$"))
     app.add_handler(CallbackQueryHandler(exam_select, "^exam_"))
     app.add_handler(CallbackQueryHandler(topic_select, "^topic_"))
     app.add_handler(CallbackQueryHandler(answer, "^ans_"))
 
-    print("🤖 Bot Running...")
+    print("🤖 MyScoreCard Bot Running...")
     app.run_polling()
 
 if __name__ == "__main__":
