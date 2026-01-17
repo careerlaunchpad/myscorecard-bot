@@ -64,37 +64,31 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📕 UGC NET", callback_data="exam_NET")]
     ]
     await update.message.reply_text(
-        "👋 *Welcome to MyScoreCard Bot*\n\nSelect Exam 👇",
+        "👋 Welcome to *MyScoreCard Bot* 🎯\n\nSelect Exam 👇",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
 # ================= START NEW =================
-async def start_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start_new_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     context.user_data.clear()
-    await start(
-        Update(update.update_id, message=q.message),
-        context
-    )
+    await start(update, context)
 
 # ================= EXAM =================
 async def exam_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
-    context.user_data.clear()
 
+    context.user_data.clear()
     context.user_data["exam"] = q.data.split("_")[1]
 
     kb = [
         [InlineKeyboardButton("History", callback_data="topic_History")],
         [InlineKeyboardButton("Polity", callback_data="topic_Polity")]
     ]
-    await q.edit_message_text(
-        "Choose Topic 👇",
-        reply_markup=InlineKeyboardMarkup(kb)
-    )
+    await q.edit_message_text("Choose Topic 👇", reply_markup=InlineKeyboardMarkup(kb))
 
 # ================= TOPIC =================
 async def topic_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -111,16 +105,15 @@ async def topic_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_q = cur.fetchone()[0]
 
     if total_q == 0:
-        await q.edit_message_text("❌ No questions available.")
+        await q.edit_message_text("❌ No questions available for this topic.")
         return
 
     context.user_data.update({
         "topic": topic,
         "score": 0,
         "q_no": 0,
-        "limit": min(10, total_q),
-        "asked_ids": [],
-        "current": None
+        "asked": [],
+        "limit": min(10, total_q)
     })
 
     await send_mcq(q, context)
@@ -129,15 +122,15 @@ async def topic_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def send_mcq(q, context):
     exam = context.user_data["exam"]
     topic = context.user_data["topic"]
-    asked = context.user_data["asked_ids"]
+    asked = context.user_data["asked"]
 
     if asked:
-        placeholders = ",".join("?" * len(asked))
+        ph = ",".join("?" * len(asked))
         cur.execute(
             f"""
             SELECT * FROM mcq
             WHERE exam=? AND topic=?
-            AND id NOT IN ({placeholders})
+            AND id NOT IN ({ph})
             ORDER BY RANDOM()
             LIMIT 1
             """,
@@ -151,13 +144,12 @@ async def send_mcq(q, context):
 
     mcq = cur.fetchone()
 
-    # 🔒 FINAL SAFETY (NO FREEZE)
     if not mcq:
         await show_result(q, context)
         return
 
+    context.user_data["asked"].append(mcq[0])
     context.user_data["current"] = mcq
-    context.user_data["asked_ids"].append(mcq[0])
 
     kb = [
         [InlineKeyboardButton("A", callback_data="ans_A"),
@@ -182,15 +174,10 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
-    mcq = context.user_data.get("current")
-    if not mcq:
-        await show_result(q, context)
-        return
-
     selected = q.data.split("_")[1]
-    correct = mcq[8]
+    mcq = context.user_data["current"]
 
-    if selected == correct:
+    if selected == mcq[8]:
         context.user_data["score"] += 1
 
     context.user_data["q_no"] += 1
@@ -206,8 +193,13 @@ async def show_result(q, context):
     score = context.user_data["score"]
     total = context.user_data["q_no"]
 
+    # ✅ FIXED INSERT (NO FREEZE)
     cur.execute(
-        "INSERT INTO scores VALUES (NULL,?,?,?,?,?)",
+        """
+        INSERT INTO scores (
+            user_id, exam, topic, score, total, test_date
+        ) VALUES (?,?,?,?,?,?)
+        """,
         (
             q.from_user.id,
             context.user_data["exam"],
@@ -244,7 +236,7 @@ async def myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rows = cur.fetchall()
 
     if not rows:
-        await update.message.reply_text("❌ No score history.")
+        await update.message.reply_text("❌ No score history found.")
         return
 
     msg = "📊 *Your Recent Tests*\n\n"
@@ -254,7 +246,7 @@ async def myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 # ================= ADMIN =================
-async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
 
@@ -273,7 +265,7 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # ================= EXCEL UPLOAD =================
-async def upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def upload_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
     await update.message.reply_text(
@@ -311,17 +303,17 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("myscore", myscore))
-    app.add_handler(CommandHandler("admin", admin))
-    app.add_handler(CommandHandler("upload", upload))
+    app.add_handler(CommandHandler("admin", admin_dashboard))
+    app.add_handler(CommandHandler("upload", upload_excel))
 
     app.add_handler(MessageHandler(filters.Document.ALL, handle_excel))
 
-    app.add_handler(CallbackQueryHandler(start_new, "^start_new$"))
+    app.add_handler(CallbackQueryHandler(start_new_test, "^start_new$"))
     app.add_handler(CallbackQueryHandler(exam_select, "^exam_"))
     app.add_handler(CallbackQueryHandler(topic_select, "^topic_"))
     app.add_handler(CallbackQueryHandler(answer, "^ans_"))
 
-    print("🤖 Bot Running...")
+    print("🤖 MyScoreCard Bot Running...")
     app.run_polling()
 
 if __name__ == "__main__":
