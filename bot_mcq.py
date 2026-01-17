@@ -19,8 +19,8 @@ from telegram.ext import (
 )
 
 # ================= CONFIG =================
-TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_IDS = [1977205811]   # 👈 अपनी Telegram numeric ID
+TOKEN = os.getenv("BOT_TOKEN")        # export BOT_TOKEN=xxxx
+ADMIN_IDS = [1977205811]              # 👈 अपनी Telegram numeric ID
 
 # ================= DATABASE =================
 conn = sqlite3.connect("mcq.db", check_same_thread=False)
@@ -55,15 +55,26 @@ CREATE TABLE IF NOT EXISTS scores (
 conn.commit()
 
 # ================= HELPERS =================
-def is_admin(uid):
+def is_admin(uid: int) -> bool:
     return uid in ADMIN_IDS
 
-def navigation_keyboard():
+
+def home_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📄 Download PDF", callback_data="pdf_result")],
-        [InlineKeyboardButton("📊 My Score", callback_data="myscore")],
-        [InlineKeyboardButton("🔁 Home / New Test", callback_data="start_new")]
+        [InlineKeyboardButton("🔁 Start New Test", callback_data="start_new")],
+        [InlineKeyboardButton("📊 My Score", callback_data="myscore")]
     ])
+
+
+def post_pdf_keyboard(has_wrong: bool):
+    kb = []
+    if has_wrong:
+        kb.append([InlineKeyboardButton("❌ Wrong-Only Practice", callback_data="wrong_only")])
+    kb.extend([
+        [InlineKeyboardButton("📊 My Score", callback_data="myscore")],
+        [InlineKeyboardButton("🔁 Start New Test", callback_data="start_new")]
+    ])
+    return InlineKeyboardMarkup(kb)
 
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -83,7 +94,7 @@ async def start_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
     context.user_data.clear()
     await q.edit_message_text(
-        "👋 *Welcome to MyScoreCard Bot*\n\nSelect Exam 👇",
+        "🔁 *Start New Test*\n\nSelect Exam 👇",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("📘 MPPSC", callback_data="exam_MPPSC")],
@@ -142,7 +153,9 @@ async def send_mcq(q, context):
     if asked:
         ph = ",".join("?" * len(asked))
         cur.execute(
-            f"SELECT * FROM mcq WHERE exam=? AND topic=? AND id NOT IN ({ph}) ORDER BY RANDOM() LIMIT 1",
+            f"""SELECT * FROM mcq
+                WHERE exam=? AND topic=? AND id NOT IN ({ph})
+                ORDER BY RANDOM() LIMIT 1""",
             [exam, topic] + asked
         )
     else:
@@ -177,12 +190,13 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
-    mcq = context.user_data["current"]
     selected = q.data.split("_")[1]
+    mcq = context.user_data["current"]
 
     context.user_data["attempts"].append({
         "question": mcq[3],
         "options": {"A": mcq[4], "B": mcq[5], "C": mcq[6], "D": mcq[7]},
+        "selected": selected,
         "correct": mcq[8],
         "explanation": mcq[9]
     })
@@ -202,27 +216,24 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= RESULT =================
 async def show_result(q, context):
+    score = context.user_data["score"]
+    total = context.user_data["q_no"]
+
     cur.execute(
         "INSERT INTO scores (user_id, exam, topic, score, total, test_date) VALUES (?,?,?,?,?,?)",
-        (
-            q.from_user.id,
-            context.user_data["exam"],
-            context.user_data["topic"],
-            context.user_data["score"],
-            context.user_data["q_no"],
-            datetime.date.today().isoformat()
-        )
+        (q.from_user.id, context.user_data["exam"], context.user_data["topic"],
+         score, total, datetime.date.today().isoformat())
     )
     conn.commit()
 
     await q.edit_message_text(
-        f"🎯 *Test Completed*\n\nScore: *{context.user_data['score']}/{context.user_data['q_no']}*",
+        f"🎯 *Test Completed*\n\nScore: *{score}/{total}*",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("❌ Wrong-Only Practice", callback_data="wrong_only")],
             [InlineKeyboardButton("📄 Download PDF", callback_data="pdf_result")],
             [InlineKeyboardButton("📊 My Score", callback_data="myscore")],
-            [InlineKeyboardButton("🔁 Home / New Test", callback_data="start_new")]
+            [InlineKeyboardButton("🔁 Start New Test", callback_data="start_new")]
         ])
     )
 
@@ -232,7 +243,7 @@ async def wrong_only(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
 
     if not context.user_data["wrong"]:
-        await q.edit_message_text("🎉 No wrong questions!", reply_markup=navigation_keyboard())
+        await q.edit_message_text("🎉 No wrong questions!", reply_markup=post_pdf_keyboard(False))
         return
 
     context.user_data["wrong_idx"] = 0
@@ -243,7 +254,10 @@ async def show_wrong(q, context):
     wrong = context.user_data["wrong"]
 
     if idx >= len(wrong):
-        await q.edit_message_text("✅ Wrong-Only Practice Completed", reply_markup=navigation_keyboard())
+        await q.edit_message_text(
+            "✅ Wrong-Only Practice Completed",
+            reply_markup=post_pdf_keyboard(True)
+        )
         return
 
     w = wrong[idx]
@@ -280,14 +294,21 @@ async def myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rows = cur.fetchall()
 
     if not rows:
-        await send("❌ No score history.", reply_markup=navigation_keyboard())
+        await send("❌ No score history.", reply_markup=home_keyboard())
         return
 
     msg = "📊 *Your Recent Tests*\n\n"
     for r in rows:
         msg += f"{r[0]} | {r[1]} → {r[2]}/{r[3]} ({r[4]})\n"
 
-    await send(msg, parse_mode="Markdown", reply_markup=navigation_keyboard())
+    await send(
+        msg,
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("📄 Download PDF", callback_data="pdf_result")],
+            [InlineKeyboardButton("🔁 Start New Test", callback_data="start_new")]
+        ])
+    )
 
 # ================= PDF (Hindi + Watermark) =================
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
@@ -301,17 +322,16 @@ pdfmetrics.registerFont(UnicodeCIDFont("HeiseiMin-W3"))
 
 def generate_pdf(uid, exam, topic, attempts, score, total):
     file = f"result_{uid}.pdf"
+    doc = SimpleDocTemplate(file, pagesize=A4)
     styles = getSampleStyleSheet()
     styles["Normal"].fontName = "HeiseiMin-W3"
+    story = []
 
-    doc = SimpleDocTemplate(file, pagesize=A4)
-    story = [
-        Paragraph("📘 MyScoreCard – टेस्ट परिणाम", styles["Title"]),
-        Paragraph(f"परीक्षा: {exam}", styles["Normal"]),
-        Paragraph(f"विषय: {topic}", styles["Normal"]),
-        Paragraph(f"स्कोर: {score}/{total}", styles["Normal"]),
-        Spacer(1, 20)
-    ]
+    story.append(Paragraph("📘 MyScoreCard – टेस्ट परिणाम", styles["Title"]))
+    story.append(Paragraph(f"परीक्षा: {exam}", styles["Normal"]))
+    story.append(Paragraph(f"विषय: {topic}", styles["Normal"]))
+    story.append(Paragraph(f"स्कोर: {score}/{total}", styles["Normal"]))
+    story.append(Spacer(1, 20))
 
     for i, a in enumerate(attempts, 1):
         story.append(Paragraph(f"<b>प्रश्न {i}:</b> {a['question']}", styles["Normal"]))
@@ -321,10 +341,10 @@ def generate_pdf(uid, exam, topic, attempts, score, total):
         story.append(Paragraph(f"व्याख्या: {a['explanation']}", styles["Normal"]))
         story.append(Spacer(1, 15))
 
-    def watermark(c, _):
+    def watermark(c, d):
+        c.saveState()
         c.setFont("HeiseiMin-W3", 40)
         c.setFillColor(lightgrey)
-        c.saveState()
         c.translate(300, 400)
         c.rotate(45)
         c.drawCentredString(0, 0, "MyScoreCard")
@@ -352,11 +372,16 @@ async def pdf_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
         filename="MyScoreCard_Result.pdf"
     )
 
-# ================= ADMIN =================
+    await q.edit_message_text(
+        "✅ *PDF Generated Successfully*",
+        parse_mode="Markdown",
+        reply_markup=post_pdf_keyboard(len(context.user_data["wrong"]) > 0)
+    )
+
+# ================= ADMIN + EXCEL =================
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
-
     cur.execute("SELECT COUNT(*) FROM mcq")
     mcq = cur.fetchone()[0]
     cur.execute("SELECT COUNT(*) FROM scores")
@@ -366,7 +391,6 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🛠 ADMIN DASHBOARD\n\nMCQs: {mcq}\nTests: {tests}\n\n/upload – Upload Excel"
     )
 
-# ================= EXCEL UPLOAD =================
 async def upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
@@ -410,7 +434,6 @@ def main():
     app.add_handler(CallbackQueryHandler(wrong_only, "^wrong_only$"))
     app.add_handler(CallbackQueryHandler(wrong_next, "^wrong_next$"))
     app.add_handler(CallbackQueryHandler(pdf_result, "^pdf_result$"))
-    app.add_handler(CallbackQueryHandler(myscore, "^myscore$"))
 
     print("🤖 MyScoreCard Bot Running...")
     app.run_polling()
