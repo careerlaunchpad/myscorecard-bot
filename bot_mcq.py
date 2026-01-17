@@ -20,7 +20,7 @@ from telegram.ext import (
 
 # ================= CONFIG =================
 TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_IDS = [1977205811]  # 👈 अपनी Telegram numeric ID
+ADMIN_IDS = [1977205811]   # 👈 अपनी Telegram numeric ID
 
 # ================= DATABASE =================
 conn = sqlite3.connect("mcq.db", check_same_thread=False)
@@ -58,6 +58,13 @@ conn.commit()
 def is_admin(uid):
     return uid in ADMIN_IDS
 
+def navigation_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📄 Download PDF", callback_data="pdf_result")],
+        [InlineKeyboardButton("📊 My Score", callback_data="myscore")],
+        [InlineKeyboardButton("🔁 Home / New Test", callback_data="start_new")]
+    ])
+
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = [
@@ -75,30 +82,29 @@ async def start_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     context.user_data.clear()
-
-    kb = [
-        [InlineKeyboardButton("📘 MPPSC", callback_data="exam_MPPSC")],
-        [InlineKeyboardButton("📕 UGC NET", callback_data="exam_NET")]
-    ]
     await q.edit_message_text(
         "👋 *Welcome to MyScoreCard Bot*\n\nSelect Exam 👇",
         parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(kb)
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("📘 MPPSC", callback_data="exam_MPPSC")],
+            [InlineKeyboardButton("📕 UGC NET", callback_data="exam_NET")]
+        ])
     )
 
 # ================= EXAM =================
 async def exam_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
-
     context.user_data.clear()
     context.user_data["exam"] = q.data.split("_")[1]
 
-    kb = [
-        [InlineKeyboardButton("History", callback_data="topic_History")],
-        [InlineKeyboardButton("Polity", callback_data="topic_Polity")]
-    ]
-    await q.edit_message_text("Choose Topic 👇", reply_markup=InlineKeyboardMarkup(kb))
+    await q.edit_message_text(
+        "Choose Topic 👇",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("History", callback_data="topic_History")],
+            [InlineKeyboardButton("Polity", callback_data="topic_Polity")]
+        ])
+    )
 
 # ================= TOPIC =================
 async def topic_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -153,19 +159,17 @@ async def send_mcq(q, context):
     context.user_data["asked"].append(mcq[0])
     context.user_data["current"] = mcq
 
-    kb = [
-        [InlineKeyboardButton("A", callback_data="ans_A"),
-         InlineKeyboardButton("B", callback_data="ans_B")],
-        [InlineKeyboardButton("C", callback_data="ans_C"),
-         InlineKeyboardButton("D", callback_data="ans_D")]
-    ]
-
     await q.edit_message_text(
         f"❓ *Q{context.user_data['q_no']+1}/{context.user_data['limit']}*\n\n"
         f"{mcq[3]}\n\n"
         f"A. {mcq[4]}\nB. {mcq[5]}\nC. {mcq[6]}\nD. {mcq[7]}",
         parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(kb)
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("A", callback_data="ans_A"),
+             InlineKeyboardButton("B", callback_data="ans_B")],
+            [InlineKeyboardButton("C", callback_data="ans_C"),
+             InlineKeyboardButton("D", callback_data="ans_D")]
+        ])
     )
 
 # ================= ANSWER =================
@@ -173,13 +177,12 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
-    selected = q.data.split("_")[1]
     mcq = context.user_data["current"]
+    selected = q.data.split("_")[1]
 
     context.user_data["attempts"].append({
         "question": mcq[3],
         "options": {"A": mcq[4], "B": mcq[5], "C": mcq[6], "D": mcq[7]},
-        "selected": selected,
         "correct": mcq[8],
         "explanation": mcq[9]
     })
@@ -199,24 +202,27 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= RESULT =================
 async def show_result(q, context):
-    score = context.user_data["score"]
-    total = context.user_data["q_no"]
-
     cur.execute(
         "INSERT INTO scores (user_id, exam, topic, score, total, test_date) VALUES (?,?,?,?,?,?)",
-        (q.from_user.id, context.user_data["exam"], context.user_data["topic"],
-         score, total, datetime.date.today().isoformat())
+        (
+            q.from_user.id,
+            context.user_data["exam"],
+            context.user_data["topic"],
+            context.user_data["score"],
+            context.user_data["q_no"],
+            datetime.date.today().isoformat()
+        )
     )
     conn.commit()
 
     await q.edit_message_text(
-        f"🎯 *Test Completed*\n\nScore: *{score}/{total}*",
+        f"🎯 *Test Completed*\n\nScore: *{context.user_data['score']}/{context.user_data['q_no']}*",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("❌ Wrong-Only Practice", callback_data="wrong_only")],
             [InlineKeyboardButton("📄 Download PDF", callback_data="pdf_result")],
             [InlineKeyboardButton("📊 My Score", callback_data="myscore")],
-            [InlineKeyboardButton("🔁 Start New Test", callback_data="start_new")]
+            [InlineKeyboardButton("🔁 Home / New Test", callback_data="start_new")]
         ])
     )
 
@@ -225,15 +231,8 @@ async def wrong_only(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
-    wrong = context.user_data.get("wrong", [])
-    if not wrong:
-        await q.edit_message_text(
-            "🎉 No wrong questions!",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📊 My Score", callback_data="myscore")],
-                [InlineKeyboardButton("🔁 Start New Test", callback_data="start_new")]
-            ])
-        )
+    if not context.user_data["wrong"]:
+        await q.edit_message_text("🎉 No wrong questions!", reply_markup=navigation_keyboard())
         return
 
     context.user_data["wrong_idx"] = 0
@@ -244,13 +243,7 @@ async def show_wrong(q, context):
     wrong = context.user_data["wrong"]
 
     if idx >= len(wrong):
-        await q.edit_message_text(
-            "✅ Wrong-Only Practice Completed",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📊 My Score", callback_data="myscore")],
-                [InlineKeyboardButton("🔁 Start New Test", callback_data="start_new")]
-            ])
-        )
+        await q.edit_message_text("✅ Wrong-Only Practice Completed", reply_markup=navigation_keyboard())
         return
 
     w = wrong[idx]
@@ -287,62 +280,57 @@ async def myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rows = cur.fetchall()
 
     if not rows:
-        await send("❌ No score history.")
+        await send("❌ No score history.", reply_markup=navigation_keyboard())
         return
 
     msg = "📊 *Your Recent Tests*\n\n"
     for r in rows:
         msg += f"{r[0]} | {r[1]} → {r[2]}/{r[3]} ({r[4]})\n"
 
-    await send(
-        msg,
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔁 Start New Test", callback_data="start_new")]
-        ])
-    )
+    await send(msg, parse_mode="Markdown", reply_markup=navigation_keyboard())
 
-# ================= PDF =================
-from reportlab.pdfgen import canvas
+# ================= PDF (Hindi + Watermark) =================
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+from reportlab.lib.colors import lightgrey
+
+pdfmetrics.registerFont(UnicodeCIDFont("HeiseiMin-W3"))
 
 def generate_pdf(uid, exam, topic, attempts, score, total):
     file = f"result_{uid}.pdf"
-    c = canvas.Canvas(file, pagesize=A4)
-    y = 800
+    styles = getSampleStyleSheet()
+    styles["Normal"].fontName = "HeiseiMin-W3"
 
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(50, y, "MyScoreCard Result")
-    y -= 30
-
-    c.setFont("Helvetica", 11)
-    c.drawString(50, y, f"Exam: {exam}")
-    y -= 15
-    c.drawString(50, y, f"Topic: {topic}")
-    y -= 15
-    c.drawString(50, y, f"Score: {score}/{total}")
-    y -= 30
+    doc = SimpleDocTemplate(file, pagesize=A4)
+    story = [
+        Paragraph("📘 MyScoreCard – टेस्ट परिणाम", styles["Title"]),
+        Paragraph(f"परीक्षा: {exam}", styles["Normal"]),
+        Paragraph(f"विषय: {topic}", styles["Normal"]),
+        Paragraph(f"स्कोर: {score}/{total}", styles["Normal"]),
+        Spacer(1, 20)
+    ]
 
     for i, a in enumerate(attempts, 1):
-        if y < 100:
-            c.showPage()
-            y = 800
-
-        c.setFont("Helvetica-Bold", 10)
-        c.drawString(50, y, f"Q{i}. {a['question']}")
-        y -= 14
-
-        c.setFont("Helvetica", 9)
+        story.append(Paragraph(f"<b>प्रश्न {i}:</b> {a['question']}", styles["Normal"]))
         for k, v in a["options"].items():
-            c.drawString(60, y, f"{k}. {v}")
-            y -= 12
+            story.append(Paragraph(f"{k}. {v}", styles["Normal"]))
+        story.append(Paragraph(f"सही उत्तर: {a['correct']}", styles["Normal"]))
+        story.append(Paragraph(f"व्याख्या: {a['explanation']}", styles["Normal"]))
+        story.append(Spacer(1, 15))
 
-        c.drawString(60, y, f"Correct: {a['correct']}")
-        y -= 12
-        c.drawString(60, y, f"Explanation: {a['explanation']}")
-        y -= 20
+    def watermark(c, _):
+        c.setFont("HeiseiMin-W3", 40)
+        c.setFillColor(lightgrey)
+        c.saveState()
+        c.translate(300, 400)
+        c.rotate(45)
+        c.drawCentredString(0, 0, "MyScoreCard")
+        c.restoreState()
 
-    c.save()
+    doc.build(story, onFirstPage=watermark, onLaterPages=watermark)
     return file
 
 async def pdf_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -421,8 +409,8 @@ def main():
     app.add_handler(CallbackQueryHandler(answer, "^ans_"))
     app.add_handler(CallbackQueryHandler(wrong_only, "^wrong_only$"))
     app.add_handler(CallbackQueryHandler(wrong_next, "^wrong_next$"))
-    app.add_handler(CallbackQueryHandler(myscore, "^myscore$"))
     app.add_handler(CallbackQueryHandler(pdf_result, "^pdf_result$"))
+    app.add_handler(CallbackQueryHandler(myscore, "^myscore$"))
 
     print("🤖 MyScoreCard Bot Running...")
     app.run_polling()
