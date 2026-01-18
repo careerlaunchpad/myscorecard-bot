@@ -6,7 +6,9 @@ python-telegram-bot[job-queue]==21.6
 pandas
 openpyxl
 reportlab
+weasyprint
 #Mangal.ttf
+
 
 
 
