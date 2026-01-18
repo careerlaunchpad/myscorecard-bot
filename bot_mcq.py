@@ -16,7 +16,7 @@ from telegram.ext import (
 
 # ================= CONFIG =================
 TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_IDS = [1977205811]   # 👈 अपनी Telegram numeric ID
+ADMIN_IDS = [1977205811]   # 👈 अपनी numeric Telegram ID
 
 # ================= DATABASE =================
 conn = sqlite3.connect("mcq.db", check_same_thread=False)
@@ -53,9 +53,9 @@ conn.commit()
 # ================= SAFE HELPERS =================
 async def safe_edit_or_send(q, text, reply_markup=None):
     try:
-        await q.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+        await q.edit_message_text(text=text, reply_markup=reply_markup, parse_mode="Markdown")
     except Exception:
-        await q.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+        await q.message.reply_text(text=text, reply_markup=reply_markup, parse_mode="Markdown")
 
 def safe_hindi(text):
     if not text:
@@ -65,12 +65,22 @@ def safe_hindi(text):
 def is_admin(uid):
     return uid in ADMIN_IDS
 
-# ================= KEYBOARDS =================
+# ================= UI HELPERS =================
 def exam_kb():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📘 MPPSC", callback_data="exam_MPPSC")],
-        [InlineKeyboardButton("📕 UGC NET", callback_data="exam_NET")]
-    ])
+    cur.execute("SELECT DISTINCT exam FROM mcq")
+    exams = [r[0] for r in cur.fetchall()]
+    if not exams:
+        return InlineKeyboardMarkup([[InlineKeyboardButton("No Exam Available", callback_data="noop")]])
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton(e, callback_data=f"exam_{e}")] for e in exams]
+    )
+
+def topic_kb(exam):
+    cur.execute("SELECT DISTINCT topic FROM mcq WHERE exam=?", (exam,))
+    topics = [r[0] for r in cur.fetchall()]
+    buttons = [[InlineKeyboardButton(t, callback_data=f"topic_{t}")] for t in topics]
+    buttons.append([InlineKeyboardButton("⬅️ Back", callback_data="start_new")])
+    return InlineKeyboardMarkup(buttons)
 
 def home_kb():
     return InlineKeyboardMarkup([
@@ -94,36 +104,21 @@ async def start_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     await safe_edit_or_send(q, "👋 *Welcome to MyScoreCard Bot*\n\nSelect Exam 👇", exam_kb())
 
-# ================= EXAM (DYNAMIC TOPIC) =================
+# ================= EXAM =================
 async def exam_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
-    exam = q.data.split("_")[1]
+    exam = q.data.replace("exam_", "")
     context.user_data.clear()
     context.user_data["exam"] = exam
 
-    cur.execute(
-        "SELECT DISTINCT topic FROM mcq WHERE exam=? ORDER BY topic",
-        (exam,)
-    )
-    topics = cur.fetchall()
-
-    if not topics:
-        await safe_edit_or_send(q, "❌ इस Exam में कोई Topic नहीं है।", home_kb())
+    cur.execute("SELECT COUNT(*) FROM mcq WHERE exam=?", (exam,))
+    if cur.fetchone()[0] == 0:
+        await safe_edit_or_send(q, "❌ इस Exam में प्रश्न नहीं हैं।", home_kb())
         return
 
-    keyboard = []
-    for t in topics:
-        keyboard.append([InlineKeyboardButton(t[0], callback_data=f"topic_{t[0]}")])
-
-    keyboard.append([InlineKeyboardButton("⬅️ Back", callback_data="start_new")])
-
-    await safe_edit_or_send(
-        q,
-        "📚 *Select Topic* 👇",
-        InlineKeyboardMarkup(keyboard)
-    )
+    await safe_edit_or_send(q, "Choose Topic 👇", topic_kb(exam))
 
 # ================= TOPIC =================
 async def topic_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -131,7 +126,7 @@ async def topic_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
 
     exam = context.user_data.get("exam")
-    topic = q.data.split("_", 1)[1]
+    topic = q.data.replace("topic_", "")
 
     if not exam:
         await safe_edit_or_send(q, "⚠️ Session expired.", home_kb())
@@ -252,7 +247,8 @@ async def wrong_only(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
-    if not context.user_data.get("wrong"):
+    wrong = context.user_data.get("wrong", [])
+    if not wrong:
         await safe_edit_or_send(q, "🎉 No wrong questions!", home_kb())
         return
 
@@ -262,6 +258,10 @@ async def wrong_only(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_wrong(q, context):
     idx = context.user_data["widx"]
     wrong = context.user_data["wrong"]
+
+    if idx < 0:
+        idx = 0
+        context.user_data["widx"] = 0
 
     if idx >= len(wrong):
         await safe_edit_or_send(q, "✅ Wrong Practice Completed", home_kb())
@@ -278,7 +278,10 @@ async def show_wrong(q, context):
                 InlineKeyboardButton("⬅️ Prev", callback_data="wrong_prev"),
                 InlineKeyboardButton("➡️ Next", callback_data="wrong_next")
             ],
-            [InlineKeyboardButton("🏠 Home", callback_data="start_new")]
+            [
+                InlineKeyboardButton("📄 Download PDF", callback_data="pdf_result"),
+                InlineKeyboardButton("🏠 Home", callback_data="start_new")
+            ]
         ])
     )
 
@@ -319,36 +322,48 @@ async def myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await send(msg, parse_mode="Markdown", reply_markup=home_kb())
 
-# ================= PDF (STABLE REPORTLAB) =================
+# ================= PDF (FINAL – HINDI FIX) =================
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.lib.colors import lightgrey
 
-pdfmetrics.registerFont(UnicodeCIDFont("HeiseiMin-W3"))
+pdfmetrics.registerFont(TTFont("Hindi", "NotoSansDevanagari-Regular.ttf"))
 
 def generate_pdf(uid, exam, topic, attempts, score, total):
     file = f"MyScoreCard_Result_{uid}.pdf"
+
     doc = SimpleDocTemplate(file, pagesize=A4)
     styles = getSampleStyleSheet()
-    styles["Normal"].fontName = "HeiseiMin-W3"
+    styles.add(ParagraphStyle(name="Hindi", fontName="Hindi", fontSize=11, leading=16))
+    styles.add(ParagraphStyle(name="HindiTitle", fontName="Hindi", fontSize=16, leading=22))
 
     story = []
-    story.append(Paragraph("MyScoreCard – टेस्ट परिणाम", styles["Normal"]))
+    story.append(Paragraph("MyScoreCard – टेस्ट परिणाम", styles["HindiTitle"]))
     story.append(Spacer(1, 10))
-    story.append(Paragraph(f"परीक्षा: {exam}", styles["Normal"]))
-    story.append(Paragraph(f"विषय: {topic}", styles["Normal"]))
-    story.append(Paragraph(f"स्कोर: {score}/{total}", styles["Normal"]))
-    story.append(Spacer(1, 12))
+    story.append(Paragraph(f"परीक्षा : {safe_hindi(exam)}", styles["Hindi"]))
+    story.append(Paragraph(f"विषय : {safe_hindi(topic)}", styles["Hindi"]))
+    story.append(Paragraph(f"स्कोर : {score}/{total}", styles["Hindi"]))
+    story.append(Spacer(1, 14))
 
     for i, a in enumerate(attempts, 1):
-        story.append(Paragraph(f"प्रश्न {i}: {a['question']}", styles["Normal"]))
-        story.append(Paragraph(f"सही उत्तर: {a['correct']}", styles["Normal"]))
-        story.append(Paragraph(f"व्याख्या: {a['explanation']}", styles["Normal"]))
-        story.append(Spacer(1, 10))
+        story.append(Paragraph(f"<b>प्रश्न {i} :</b> {safe_hindi(a['question'])}", styles["Hindi"]))
+        story.append(Paragraph(f"<b>सही उत्तर :</b> {safe_hindi(a['correct'])}", styles["Hindi"]))
+        story.append(Paragraph(f"<b>व्याख्या :</b> {safe_hindi(a['explanation'])}", styles["Hindi"]))
+        story.append(Spacer(1, 12))
 
-    doc.build(story)
+    def watermark(c, d):
+        c.saveState()
+        c.setFont("Hindi", 28)
+        c.setFillColor(lightgrey)
+        c.translate(300, 420)
+        c.rotate(45)
+        c.drawCentredString(0, 0, "MyScoreCard Bot")
+        c.restoreState()
+
+    doc.build(story, onFirstPage=watermark, onLaterPages=watermark)
     return file
 
 async def pdf_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -368,6 +383,17 @@ async def pdf_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id=q.from_user.id,
         document=open(file, "rb"),
         filename=file
+    )
+
+    await context.bot.send_message(
+        chat_id=q.from_user.id,
+        text="📄 *PDF Generated Successfully*\n\nअब आगे क्या करें?",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ Wrong Only Practice", callback_data="wrong_only")],
+            [InlineKeyboardButton("📊 My Score", callback_data="myscore")],
+            [InlineKeyboardButton("🏠 Home", callback_data="start_new")]
+        ])
     )
 
 # ================= ADMIN =================
