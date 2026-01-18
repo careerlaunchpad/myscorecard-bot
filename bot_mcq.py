@@ -4,6 +4,7 @@ import datetime
 import pandas as pd
 import unicodedata
 
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -60,13 +61,28 @@ async def safe_edit_or_send(q, text, reply_markup=None):
             parse_mode="Markdown"
         )
     except BadRequest as e:
+        # 🔹 Telegram error: Message is not modified
         if "Message is not modified" in str(e):
             return
-        await q.message.reply_text(
-            text=text,
-            reply_markup=reply_markup,
-            parse_mode="Markdown"
-        )
+        # 🔹 fallback: send new message
+        try:
+            await q.message.reply_text(
+                text=text,
+                reply_markup=reply_markup,
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
+    except Exception:
+        try:
+            await q.message.reply_text(
+                text=text,
+                reply_markup=reply_markup,
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
+
 
 def safe_hindi(text):
     if not text:
@@ -489,3 +505,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
