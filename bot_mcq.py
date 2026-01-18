@@ -262,6 +262,7 @@ async def show_result(q, context):
     )
 
 # ================= PDF (REAL HINDI) =================
+# ================= PDF (STABLE HINDI FIX) =================
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -269,66 +270,70 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.colors import lightgrey
 
-pdfmetrics.registerFont(
-    TTFont("NotoHindi", "NotoSansDevanagari-Regular.ttf")
-)
+# Register proper Hindi font
+pdfmetrics.registerFont(TTFont("Mangal", "Mangal.ttf"))
 
 def generate_pdf(uid, exam, topic, attempts, score, total):
     file = f"MyScoreCard_Result_{uid}.pdf"
-    doc = SimpleDocTemplate(file, pagesize=A4)
+    doc = SimpleDocTemplate(
+        file,
+        pagesize=A4,
+        rightMargin=36,
+        leftMargin=36,
+        topMargin=36,
+        bottomMargin=36
+    )
 
     styles = getSampleStyleSheet()
     styles.add(ParagraphStyle(
+        name="HindiTitle",
+        fontName="Mangal",
+        fontSize=14,
+        leading=20,
+        spaceAfter=10
+    ))
+    styles.add(ParagraphStyle(
         name="Hindi",
-        fontName="NotoHindi",
+        fontName="Mangal",
         fontSize=11,
-        leading=16
+        leading=16,
+        spaceAfter=6
     ))
 
     story = []
-    story.append(Paragraph("MyScoreCard – टेस्ट परिणाम", styles["Hindi"]))
-    story.append(Spacer(1, 12))
+
+    story.append(Paragraph("MyScoreCard – टेस्ट परिणाम", styles["HindiTitle"]))
     story.append(Paragraph(f"परीक्षा : {safe_hindi(exam)}", styles["Hindi"]))
     story.append(Paragraph(f"विषय : {safe_hindi(topic)}", styles["Hindi"]))
     story.append(Paragraph(f"स्कोर : {score}/{total}", styles["Hindi"]))
-    story.append(Spacer(1, 14))
+    story.append(Spacer(1, 12))
 
     for i, a in enumerate(attempts, 1):
-        story.append(Paragraph(f"<b>प्रश्न {i} :</b> {safe_hindi(a['question'])}", styles["Hindi"]))
-        story.append(Paragraph(f"<b>सही उत्तर :</b> {safe_hindi(a['correct'])}", styles["Hindi"]))
-        story.append(Paragraph(f"<b>व्याख्या :</b> {safe_hindi(a['explanation'])}", styles["Hindi"]))
+        story.append(Paragraph(
+            f"<b>प्रश्न {i} :</b> {safe_hindi(a['question'])}",
+            styles["Hindi"]
+        ))
+        story.append(Paragraph(
+            f"<b>सही उत्तर :</b> {safe_hindi(a['correct'])}",
+            styles["Hindi"]
+        ))
+        story.append(Paragraph(
+            f"<b>व्याख्या :</b> {safe_hindi(a['explanation'])}",
+            styles["Hindi"]
+        ))
         story.append(Spacer(1, 10))
 
-    def watermark(c, d):
-        c.saveState()
-        c.setFont("NotoHindi", 28)
-        c.setFillColor(lightgrey)
-        c.translate(300, 420)
-        c.rotate(45)
-        c.drawCentredString(0, 0, "MyScoreCard Bot")
-        c.restoreState()
+    def watermark(canvas, doc):
+        canvas.saveState()
+        canvas.setFont("Mangal", 26)
+        canvas.setFillColor(lightgrey)
+        canvas.translate(300, 400)
+        canvas.rotate(45)
+        canvas.drawCentredString(0, 0, "MyScoreCard Bot")
+        canvas.restoreState()
 
     doc.build(story, onFirstPage=watermark, onLaterPages=watermark)
     return file
-
-async def pdf_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-
-    file = generate_pdf(
-        q.from_user.id,
-        context.user_data["exam"],
-        context.user_data["topic"],
-        context.user_data["attempts"],
-        context.user_data["score"],
-        context.user_data["q_no"]
-    )
-
-    await context.bot.send_document(
-        chat_id=q.from_user.id,
-        document=open(file, "rb"),
-        filename=file
-    )
 
 # ================= MAIN =================
 def main():
@@ -349,3 +354,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
