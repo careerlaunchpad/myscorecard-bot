@@ -391,34 +391,80 @@ def generate_pdf(uid, exam, topic, attempts, score, total):
     doc.build(story, onFirstPage=watermark, onLaterPages=watermark)
     return file
 
-async def pdf_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
+from weasyprint import HTML, CSS
 
-    if "exam" not in context.user_data:
-        await safe_edit_or_send(q, "⚠️ No active test found.", home_kb())
-        return
+def generate_pdf_html(uid, exam, topic, attempts, score, total):
+    file = f"MyScoreCard_Result_{uid}.pdf"
 
-    file = generate_pdf(
-        q.from_user.id,
-        context.user_data["exam"],
-        context.user_data["topic"],
-        context.user_data["attempts"],
-        context.user_data["score"],
-        context.user_data["q_no"]
-    )
+    html = f"""
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <style>
+            @font-face {{
+                font-family: 'Mangal';
+                src: url('Mangal.ttf');
+            }}
 
-    await context.bot.send_document(
-        chat_id=q.from_user.id,
-        document=open(file, "rb"),
-        filename=file
-    )
+            body {{
+                font-family: 'Mangal';
+                font-size: 14px;
+                line-height: 1.6;
+            }}
 
-    await context.bot.send_message(
-        chat_id=q.from_user.id,
-        text="📄 PDF Generated Successfully",
-        reply_markup=home_kb()
-    )
+            .title {{
+                font-size: 20px;
+                font-weight: bold;
+                text-align: center;
+                margin-bottom: 20px;
+            }}
+
+            .meta {{
+                margin-bottom: 15px;
+            }}
+
+            .question {{
+                margin-top: 15px;
+                margin-bottom: 10px;
+            }}
+
+            .watermark {{
+                position: fixed;
+                top: 40%;
+                left: 25%;
+                font-size: 48px;
+                color: rgba(150,150,150,0.25);
+                transform: rotate(-30deg);
+            }}
+        </style>
+    </head>
+
+    <body>
+        <div class="watermark">MyScoreCard Bot</div>
+
+        <div class="title">MyScoreCard – टेस्ट परिणाम</div>
+
+        <div class="meta">परीक्षा : {exam}</div>
+        <div class="meta">विषय : {topic}</div>
+        <div class="meta">स्कोर : {score}/{total}</div>
+
+        <hr>
+    """
+
+    for i, a in enumerate(attempts, 1):
+        html += f"""
+        <div class="question">
+            <b>प्रश्न {i} :</b> {a['question']}<br>
+            <b>सही उत्तर :</b> {a['correct']}<br>
+            <b>व्याख्या :</b> {a['explanation']}
+        </div>
+        """
+
+    html += "</body></html>"
+
+    HTML(string=html, base_url=".").write_pdf(file)
+    return file
+
 
 # ================= ADMIN =================
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -485,3 +531,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
