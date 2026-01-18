@@ -58,14 +58,12 @@ async def safe_edit_or_send(q, text, reply_markup=None):
         await q.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
 
 def safe_hindi(text):
-    if not text:
-        return ""
-    return unicodedata.normalize("NFKC", str(text))
+    return unicodedata.normalize("NFKC", str(text)) if text else ""
 
 def is_admin(uid):
     return uid in ADMIN_IDS
 
-# ================= UI =================
+# ================= KEYBOARDS =================
 def exam_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📘 MPPSC", callback_data="exam_MPPSC")],
@@ -233,71 +231,132 @@ async def show_result(q, context):
         q,
         f"🎯 *Test Completed*\n\nScore: *{context.user_data['score']}/{context.user_data['q_no']}*",
         InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ Wrong Only Practice", callback_data="wrong_only")],
             [InlineKeyboardButton("📊 My Score", callback_data="myscore")],
             [InlineKeyboardButton("📄 Download PDF", callback_data="pdf_result")],
             [InlineKeyboardButton("🏠 Home", callback_data="start_new")]
         ])
     )
 
-# ================= PDF (STABLE HINDI) =================
+# ================= WRONG ONLY =================
+async def wrong_only(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    wrong = context.user_data.get("wrong", [])
+    if not wrong:
+        await safe_edit_or_send(q, "🎉 No wrong questions!", home_kb())
+        return
+
+    context.user_data["widx"] = 0
+    await show_wrong(q, context)
+
+async def show_wrong(q, context):
+    idx = context.user_data["widx"]
+    wrong = context.user_data["wrong"]
+
+    if idx >= len(wrong):
+        await safe_edit_or_send(q, "✅ Wrong Practice Completed", home_kb())
+        return
+
+    w = wrong[idx]
+    await safe_edit_or_send(
+        q,
+        f"❌ *Wrong {idx+1}/{len(wrong)}*\n\n{w[3]}\n\n"
+        f"✅ Correct: *{w[8]}*\n\n📘 {w[9]}",
+        InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ Prev", callback_data="wrong_prev"),
+             InlineKeyboardButton("➡️ Next", callback_data="wrong_next")],
+            [InlineKeyboardButton("🏠 Home", callback_data="start_new")]
+        ])
+    )
+
+async def wrong_next(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    context.user_data["widx"] += 1
+    await show_wrong(q, context)
+
+async def wrong_prev(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    context.user_data["widx"] -= 1
+    if context.user_data["widx"] < 0:
+        context.user_data["widx"] = 0
+    await show_wrong(q, context)
+
+# ================= MY SCORE (FIXED) =================
+async def myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query:
+        q = update.callback_query
+        await q.answer()
+        send = q.edit_message_text
+    else:
+        send = update.message.reply_text
+
+    cur.execute(
+        "SELECT exam, topic, score, total, test_date FROM scores "
+        "WHERE user_id=? ORDER BY id DESC LIMIT 5",
+        (update.effective_user.id,)
+    )
+    rows = cur.fetchall()
+
+    if not rows:
+        await send("❌ अभी तक कोई टेस्ट रिकॉर्ड नहीं है।", reply_markup=home_kb())
+        return
+
+    msg = "📊 *Your Recent Tests*\n\n"
+    for r in rows:
+        msg += f"{r[0]} | {r[1]} → {r[2]}/{r[3]} ({r[4]})\n"
+
+    await send(msg, parse_mode="Markdown", reply_markup=home_kb())
+
+# ================= PDF (REAL HINDI – STABLE) =================
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.styles import ParagraphStyle
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.colors import lightgrey
 
-pdfmetrics.registerFont(
-    TTFont("NotoHindi", "NotoSansDevanagari-Regular.ttf")
-)
+pdfmetrics.registerFont(TTFont("Hindi", "NotoSansDevanagari-Regular.ttf"))
 
 def generate_pdf(uid, exam, topic, attempts, score, total):
     file = f"MyScoreCard_Result_{uid}.pdf"
+    doc = SimpleDocTemplate(file, pagesize=A4)
 
-    doc = SimpleDocTemplate(file, pagesize=A4, leftMargin=40, rightMargin=40)
-    styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(
+    style = ParagraphStyle(
         name="Hindi",
-        fontName="NotoHindi",
+        fontName="Hindi",
         fontSize=11,
-        leading=16
-    ))
-    styles.add(ParagraphStyle(
-        name="HindiTitle",
-        fontName="NotoHindi",
-        fontSize=15,
-        leading=20
-    ))
+        leading=15
+    )
 
-    story = []
-    story.append(Paragraph("MyScoreCard – टेस्ट परिणाम", styles["HindiTitle"]))
-    story.append(Spacer(1, 10))
-    story.append(Paragraph(f"परीक्षा : {safe_hindi(exam)}", styles["Hindi"]))
-    story.append(Paragraph(f"विषय : {safe_hindi(topic)}", styles["Hindi"]))
-    story.append(Paragraph(f"स्कोर : {score}/{total}", styles["Hindi"]))
-    story.append(Spacer(1, 15))
+    story = [
+        Paragraph("MyScoreCard – टेस्ट परिणाम", style),
+        Spacer(1, 10),
+        Paragraph(f"परीक्षा : {safe_hindi(exam)}", style),
+        Paragraph(f"विषय : {safe_hindi(topic)}", style),
+        Paragraph(f"स्कोर : {score}/{total}", style),
+        Spacer(1, 12)
+    ]
 
     for i, a in enumerate(attempts, 1):
-        story.append(Paragraph(f"<b>प्रश्न {i} :</b> {safe_hindi(a['question'])}", styles["Hindi"]))
-        story.append(Paragraph(f"<b>सही उत्तर :</b> {safe_hindi(a['correct'])}", styles["Hindi"]))
-        story.append(Paragraph(f"<b>व्याख्या :</b> {safe_hindi(a['explanation'])}", styles["Hindi"]))
-        story.append(Spacer(1, 12))
+        story.append(Paragraph(f"प्रश्न {i}: {safe_hindi(a['question'])}", style))
+        story.append(Paragraph(f"सही उत्तर: {safe_hindi(a['correct'])}", style))
+        story.append(Paragraph(f"व्याख्या: {safe_hindi(a['explanation'])}", style))
+        story.append(Spacer(1, 10))
 
-    def watermark(c, d):
-        c.saveState()
-        c.setFont("NotoHindi", 28)
-        c.setFillColor(lightgrey)
-        c.translate(300, 420)
-        c.rotate(45)
-        c.drawCentredString(0, 0, "MyScoreCard Bot")
-        c.restoreState()
-
-    doc.build(story, onFirstPage=watermark, onLaterPages=watermark)
+    doc.build(story)
     return file
 
 async def pdf_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
+
+    if "exam" not in context.user_data:
+        await safe_edit_or_send(q, "⚠️ No active test found.", home_kb())
+        return
 
     file = generate_pdf(
         q.from_user.id,
@@ -325,6 +384,10 @@ def main():
     app.add_handler(CallbackQueryHandler(exam_select, "^exam_"))
     app.add_handler(CallbackQueryHandler(topic_select, "^topic_"))
     app.add_handler(CallbackQueryHandler(answer, "^ans_"))
+    app.add_handler(CallbackQueryHandler(wrong_only, "^wrong_only$"))
+    app.add_handler(CallbackQueryHandler(wrong_next, "^wrong_next$"))
+    app.add_handler(CallbackQueryHandler(wrong_prev, "^wrong_prev$"))
+    app.add_handler(CallbackQueryHandler(myscore, "^myscore$"))
     app.add_handler(CallbackQueryHandler(pdf_result, "^pdf_result$"))
 
     print("🤖 Bot Running...")
