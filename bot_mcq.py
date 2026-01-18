@@ -13,7 +13,6 @@ from telegram.ext import (
     ContextTypes,
     filters
 )
-from telegram.error import BadRequest
 
 # ================= CONFIG =================
 TOKEN = os.getenv("BOT_TOKEN")
@@ -54,38 +53,30 @@ conn.commit()
 # ================= SAFE HELPERS =================
 async def safe_edit_or_send(q, text, reply_markup=None):
     try:
-        await q.edit_message_text(
-            text=text,
+        if q.message and q.message.text != text:
+            await q.edit_message_text(
+                text,
+                reply_markup=reply_markup,
+                parse_mode="Markdown"
+            )
+        else:
+            raise Exception
+    except Exception:
+        await q.message.reply_text(
+            text,
             reply_markup=reply_markup,
             parse_mode="Markdown"
         )
-    except BadRequest as e:
-        if "Message is not modified" in str(e):
-            return
-        try:
-            await q.message.reply_text(
-                text=text,
-                reply_markup=reply_markup,
-                parse_mode="Markdown"
-            )
-        except Exception:
-            pass
-    except Exception:
-        try:
-            await q.message.reply_text(
-                text=text,
-                reply_markup=reply_markup,
-                parse_mode="Markdown"
-            )
-        except Exception:
-            pass
 
 def safe_hindi(text):
     if not text:
         return ""
-    return unicodedata.normalize("NFKC", str(text))
+    return unicodedata.normalize("NFKC", text)
 
-# ================= UI =================
+def is_admin(uid):
+    return uid in ADMIN_IDS
+
+# ================= KEYBOARDS =================
 def exam_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📘 MPPSC", callback_data="exam_MPPSC")],
@@ -98,9 +89,6 @@ def home_kb():
         [InlineKeyboardButton("📊 My Score", callback_data="myscore")],
         [InlineKeyboardButton("📄 Download PDF", callback_data="pdf_result")]
     ])
-
-def is_admin(uid):
-    return uid in ADMIN_IDS
 
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -176,7 +164,7 @@ async def topic_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await send_mcq(q, context)
 
-# ================= MCQ =================
+# ================= SEND MCQ =================
 async def send_mcq(q, context):
     exam = context.user_data["exam"]
     topic = context.user_data["topic"]
@@ -205,7 +193,8 @@ async def send_mcq(q, context):
     await safe_edit_or_send(
         q,
         f"❓ *Q{context.user_data['q_no']+1}/{context.user_data['limit']}*\n\n"
-        f"{mcq[3]}\n\nA. {mcq[4]}\nB. {mcq[5]}\nC. {mcq[6]}\nD. {mcq[7]}",
+        f"{mcq[3]}\n\n"
+        f"A. {mcq[4]}\nB. {mcq[5]}\nC. {mcq[6]}\nD. {mcq[7]}",
         InlineKeyboardMarkup([
             [InlineKeyboardButton("A", callback_data="ans_A"),
              InlineKeyboardButton("B", callback_data="ans_B")],
@@ -243,7 +232,7 @@ async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= RESULT =================
 async def show_result(q, context):
     cur.execute(
-        "INSERT INTO scores VALUES (NULL,?,?,?,?,?,?)",
+        "INSERT INTO scores (user_id, exam, topic, score, total, test_date) VALUES (?,?,?,?,?,?)",
         (
             q.from_user.id,
             context.user_data["exam"],
@@ -258,11 +247,15 @@ async def show_result(q, context):
     await safe_edit_or_send(
         q,
         f"🎯 *Test Completed*\n\nScore: *{context.user_data['score']}/{context.user_data['q_no']}*",
-        home_kb()
+        InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ Wrong Only Practice", callback_data="wrong_only")],
+            [InlineKeyboardButton("📊 My Score", callback_data="myscore")],
+            [InlineKeyboardButton("📄 Download PDF", callback_data="pdf_result")],
+            [InlineKeyboardButton("🏠 Home", callback_data="start_new")]
+        ])
     )
 
-# ================= PDF (REAL HINDI) =================
-# ================= PDF (STABLE HINDI FIX) =================
+# ================= PDF (PERFECT HINDI) =================
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -270,38 +263,27 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.colors import lightgrey
 
-# Register proper Hindi font
 pdfmetrics.registerFont(TTFont("Mangal", "Mangal.ttf"))
 
 def generate_pdf(uid, exam, topic, attempts, score, total):
     file = f"MyScoreCard_Result_{uid}.pdf"
-    doc = SimpleDocTemplate(
-        file,
-        pagesize=A4,
-        rightMargin=36,
-        leftMargin=36,
-        topMargin=36,
-        bottomMargin=36
-    )
+    doc = SimpleDocTemplate(file, pagesize=A4, leftMargin=36, rightMargin=36)
 
     styles = getSampleStyleSheet()
     styles.add(ParagraphStyle(
         name="HindiTitle",
         fontName="Mangal",
         fontSize=14,
-        leading=20,
-        spaceAfter=10
+        leading=20
     ))
     styles.add(ParagraphStyle(
         name="Hindi",
         fontName="Mangal",
         fontSize=11,
-        leading=16,
-        spaceAfter=6
+        leading=16
     ))
 
     story = []
-
     story.append(Paragraph("MyScoreCard – टेस्ट परिणाम", styles["HindiTitle"]))
     story.append(Paragraph(f"परीक्षा : {safe_hindi(exam)}", styles["Hindi"]))
     story.append(Paragraph(f"विषय : {safe_hindi(topic)}", styles["Hindi"]))
@@ -309,31 +291,66 @@ def generate_pdf(uid, exam, topic, attempts, score, total):
     story.append(Spacer(1, 12))
 
     for i, a in enumerate(attempts, 1):
-        story.append(Paragraph(
-            f"<b>प्रश्न {i} :</b> {safe_hindi(a['question'])}",
-            styles["Hindi"]
-        ))
-        story.append(Paragraph(
-            f"<b>सही उत्तर :</b> {safe_hindi(a['correct'])}",
-            styles["Hindi"]
-        ))
-        story.append(Paragraph(
-            f"<b>व्याख्या :</b> {safe_hindi(a['explanation'])}",
-            styles["Hindi"]
-        ))
+        story.append(Paragraph(f"<b>प्रश्न {i} :</b> {safe_hindi(a['question'])}", styles["Hindi"]))
+        story.append(Paragraph(f"<b>सही उत्तर :</b> {safe_hindi(a['correct'])}", styles["Hindi"]))
+        story.append(Paragraph(f"<b>व्याख्या :</b> {safe_hindi(a['explanation'])}", styles["Hindi"]))
         story.append(Spacer(1, 10))
 
-    def watermark(canvas, doc):
-        canvas.saveState()
-        canvas.setFont("Mangal", 26)
-        canvas.setFillColor(lightgrey)
-        canvas.translate(300, 400)
-        canvas.rotate(45)
-        canvas.drawCentredString(0, 0, "MyScoreCard Bot")
-        canvas.restoreState()
+    def watermark(c, d):
+        c.saveState()
+        c.setFont("Mangal", 26)
+        c.setFillColor(lightgrey)
+        c.translate(300, 420)
+        c.rotate(45)
+        c.drawCentredString(0, 0, "MyScoreCard Bot")
+        c.restoreState()
 
     doc.build(story, onFirstPage=watermark, onLaterPages=watermark)
     return file
+
+async def pdf_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    file = generate_pdf(
+        q.from_user.id,
+        context.user_data["exam"],
+        context.user_data["topic"],
+        context.user_data["attempts"],
+        context.user_data["score"],
+        context.user_data["q_no"]
+    )
+
+    await context.bot.send_document(
+        chat_id=q.from_user.id,
+        document=open(file, "rb"),
+        filename=file
+    )
+
+# ================= MY SCORE =================
+async def myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query:
+        q = update.callback_query
+        await q.answer()
+        send = q.edit_message_text
+    else:
+        send = update.message.reply_text
+
+    cur.execute(
+        "SELECT exam, topic, score, total, test_date FROM scores WHERE user_id=? ORDER BY id DESC LIMIT 5",
+        (update.effective_user.id,)
+    )
+    rows = cur.fetchall()
+
+    if not rows:
+        await send("❌ No score history.", reply_markup=home_kb())
+        return
+
+    msg = "📊 *Your Recent Tests*\n\n"
+    for r in rows:
+        msg += f"{r[0]} | {r[1]} → {r[2]}/{r[3]} ({r[4]})\n"
+
+    await send(msg, parse_mode="Markdown", reply_markup=home_kb())
 
 # ================= MAIN =================
 def main():
@@ -346,12 +363,11 @@ def main():
     app.add_handler(CallbackQueryHandler(exam_select, "^exam_"))
     app.add_handler(CallbackQueryHandler(topic_select, "^topic_"))
     app.add_handler(CallbackQueryHandler(answer, "^ans_"))
-    app.add_handler(CallbackQueryHandler(pdf_result, "^pdf_result$"))
     app.add_handler(CallbackQueryHandler(myscore, "^myscore$"))
+    app.add_handler(CallbackQueryHandler(pdf_result, "^pdf_result$"))
 
-    print("🤖 Bot Running...")
+    print("🤖 MyScoreCard Bot Running...")
     app.run_polling()
 
 if __name__ == "__main__":
     main()
-
