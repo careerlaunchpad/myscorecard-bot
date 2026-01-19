@@ -12,7 +12,7 @@ from telegram.error import BadRequest
 # ================= CONFIG =================
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS = [1977205811]
-QUESTION_TIME = 30  # seconds
+QUESTION_TIME = 60  # seconds
 
 # ================= DATABASE =================
 conn = sqlite3.connect("mcq.db", check_same_thread=False)
@@ -404,5 +404,6 @@ def main():
 
 if __name__=="__main__":
     main()
+
 
 
