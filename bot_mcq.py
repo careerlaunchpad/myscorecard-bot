@@ -525,10 +525,7 @@ async def admin_export(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # ================= FINAL HANDLERS =================
-def register_final_handlers(app):
-    app.add_handler(CallbackQueryHandler(leaderboard, "^leaderboard$"))
-    app.add_handler(CallbackQueryHandler(review_all, "^review_all$"))
-    app.add_handler(CallbackQueryHandler(admin_export, "^admin_export$"))
+def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
@@ -548,15 +545,17 @@ def register_final_handlers(app):
     app.add_handler(CallbackQueryHandler(myscore, "^myscore$"))
     app.add_handler(CallbackQueryHandler(pdf_result, "^pdf_result$"))
 
-    # ✅ ADD THIS LINE
-    #register_final_handlers(app)
+    # ✅ FINAL EXTENSION HANDLERS
+    register_final_handlers(app)
 
     print("🤖 Bot Running...")
     app.run_polling()
 
-# ================= MAIN EXTENSION =================
-# add this inside main() AFTER building app
-# register_final_handlers(app)
+    print("🤖 Bot Running...")
+    app.run_polling()
+
+
 if __name__ == "__main__":
     main()
+
 
