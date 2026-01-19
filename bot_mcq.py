@@ -425,35 +425,36 @@ async def pdf_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ])
     )
 
-# ================= ADMIN =================
-async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        return
 
-    cur.execute("SELECT COUNT(*) FROM mcq")
-    mcq_count = cur.fetchone()[0]
-    cur.execute("SELECT COUNT(*) FROM scores")
-    test_count = cur.fetchone()[0]
-
-    await update.message.reply_text(
-        f"🛠 ADMIN PANEL\n\nMCQs: {mcq_count}\nTests: {test_count}\n\n/upload – Upload Excel"
+# ================= ADMIN PANEL =================
+async def admin_panel(update, context):
+    q = update.callback_query
+    await q.answer()
+    if not is_admin(q.from_user.id): return
+    await safe_edit_or_send(
+        q,
+        "🛠 *Admin Dashboard*",
+        InlineKeyboardMarkup([
+            [InlineKeyboardButton("📤 Upload Excel", callback_data="admin_upload")],
+            [InlineKeyboardButton("🧾 Export Excel", callback_data="admin_export_excel")],
+            [InlineKeyboardButton("⬅️ Back", callback_data="start_new")]
+        ])
     )
 
-async def upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        return
-    await update.message.reply_text(
-        "📤 Upload Excel (.xlsx)\nColumns:\nexam, topic, question, a, b, c, d, correct, explanation"
-    )
+async def admin_export_excel(update, context):
+    q = update.callback_query
+    await q.answer()
+    df = pd.read_sql("SELECT * FROM mcq", conn)
+    path = tempfile.mktemp(".xlsx")
+    df.to_excel(path, index=False)
+    await context.bot.send_document(q.from_user.id, open(path, "rb"))
 
-async def handle_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        return
-
+# ================= EXCEL UPLOAD =================
+async def upload(update, context):
+    if not is_admin(update.effective_user.id): return
     file = await update.message.document.get_file()
-    path = "upload.xlsx"
+    path = tempfile.mktemp(".xlsx")
     await file.download_to_drive(path)
-
     df = pd.read_excel(path)
     for _, r in df.iterrows():
         cur.execute(
@@ -461,8 +462,7 @@ async def handle_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
             (r.exam, r.topic, r.question, r.a, r.b, r.c, r.d, r.correct, r.explanation)
         )
     conn.commit()
-
-    await update.message.reply_text(f"✅ {len(df)} MCQs uploaded successfully")
+    await update.message.reply_text("✅ MCQs Uploaded")
 
 # ================= MAIN =================
 def main():
@@ -473,7 +473,7 @@ def main():
     app.add_handler(CommandHandler("admin", admin))
     app.add_handler(CommandHandler("upload", upload))
 
-    app.add_handler(MessageHandler(filters.Document.ALL, handle_excel))
+    #app.add_handler(MessageHandler(filters.Document.ALL, handle_excel))
 
     app.add_handler(CallbackQueryHandler(start_new, "^start_new$"))
     app.add_handler(CallbackQueryHandler(exam_select, "^exam_"))
@@ -484,10 +484,14 @@ def main():
     app.add_handler(CallbackQueryHandler(wrong_prev, "^wrong_prev$"))
     app.add_handler(CallbackQueryHandler(myscore, "^myscore$"))
     app.add_handler(CallbackQueryHandler(pdf_result, "^pdf_result$"))
+    
+    app.add_handler(CallbackQueryHandler(admin_panel, "^admin_panel$"))
+    app.add_handler(CallbackQueryHandler(admin_export_excel, "^admin_export_excel$"))
 
     print("🤖 Bot Running...")
     app.run_polling()
 
 if __name__ == "__main__":
     main()
+
 
