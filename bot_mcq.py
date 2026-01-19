@@ -382,14 +382,14 @@ async def upload(update, ctx):
     conn.commit()
     await update.message.reply_text("✅ MCQs Uploaded")
 # ================= MY SCORE =================
-async def myscore(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-
-    cur.execute("""
-        SELECT exam, topic, score, total, test_date
-        FROM scores
-        WHERE user_id=?
-        ORDER BY id DESC
+    cur.execute("SELECT exam, topic, score, total FROM scores WHERE user_id=? ORDER BY id DESC LIMIT 5", (uid,))
+    rows = cur.fetchall()
+    msg = "📊 *Your Recent Tests*\n\n"
+    for r in rows:
+        msg += f"{r[0]} | {r[1]} → {r[2]}/{r[3]}\n"
+    await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=home_kb())
 
 # ================= MAIN =================
 def main():
@@ -419,5 +419,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
