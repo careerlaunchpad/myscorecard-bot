@@ -381,13 +381,22 @@ async def upload(update, ctx):
         )
     conn.commit()
     await update.message.reply_text("✅ MCQs Uploaded")
+# ================= MY SCORE =================
+async def myscore(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+
+    cur.execute("""
+        SELECT exam, topic, score, total, test_date
+        FROM scores
+        WHERE user_id=?
+        ORDER BY id DESC
 
 # ================= MAIN =================
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    #app.add_handler(CommandHandler("myscore", myscore))
+    app.add_handler(CommandHandler("myscore", myscore))
     app.add_handler(CommandHandler("upload", upload))
 
     app.add_handler(CallbackQueryHandler(start_new,"^start_new$"))
@@ -410,4 +419,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
