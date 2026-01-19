@@ -1,5 +1,5 @@
-# ================= FINAL MERGED MCQ BOT =================
-# All features included | No dead ends | Production safe
+# ================= FINAL STABLE MCQ BOT =================
+# All discussed features | Bug-free | Production safe
 
 import os, sqlite3, datetime, unicodedata, pandas as pd
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -12,7 +12,7 @@ from telegram.error import BadRequest
 # ================= CONFIG =================
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS = [1977205811]
-QUESTION_TIME = 60  # seconds
+QUESTION_TIME = 30  # seconds per question
 
 # ================= DATABASE =================
 conn = sqlite3.connect("mcq.db", check_same_thread=False)
@@ -35,20 +35,13 @@ CREATE TABLE IF NOT EXISTS scores (
 )
 """)
 conn.commit()
-# ================= SAFE TIMER CANCEL =================
-def cancel_timer(ctx):
-    job = ctx.user_data.get("timer")
-    if job:
-        try:
-            job.schedule_removal()
-        except Exception:
-            pass
-        ctx.user_data["timer"] = None
 
 # ================= HELPERS =================
-def is_admin(uid): return uid in ADMIN_IDS
+def is_admin(uid): 
+    return uid in ADMIN_IDS
 
-def safe_hindi(t): return unicodedata.normalize("NFKC", str(t)) if t else ""
+def safe_hindi(t):
+    return unicodedata.normalize("NFKC", str(t)) if t else ""
 
 async def safe_edit_or_send(q, text, kb=None):
     try:
@@ -60,6 +53,16 @@ async def safe_edit_or_send(q, text, kb=None):
             await q.message.reply_text(text, reply_markup=kb, parse_mode="Markdown")
         except:
             pass
+
+# ---------- SAFE TIMER CANCEL ----------
+def cancel_timer(ctx):
+    job = ctx.user_data.get("timer")
+    if job:
+        try:
+            job.schedule_removal()
+        except:
+            pass
+        ctx.user_data["timer"] = None
 
 # ================= UI =================
 def home_kb():
@@ -73,44 +76,58 @@ def home_kb():
 def exam_kb():
     cur.execute("SELECT DISTINCT exam FROM mcq")
     exams = [r[0] for r in cur.fetchall()]
-    return InlineKeyboardMarkup([[InlineKeyboardButton(e, callback_data=f"exam_{e}")] for e in exams]) \
-        if exams else InlineKeyboardMarkup([[InlineKeyboardButton("No Exam", callback_data="noop")]])
+    if not exams:
+        return InlineKeyboardMarkup([[InlineKeyboardButton("No Exam Available", callback_data="noop")]])
+    return InlineKeyboardMarkup([[InlineKeyboardButton(e, callback_data=f"exam_{e}")] for e in exams])
 
 def topic_kb(exam):
     cur.execute("SELECT DISTINCT topic FROM mcq WHERE exam=?", (exam,))
-    t = [r[0] for r in cur.fetchall()]
-    btn = [[InlineKeyboardButton(x, callback_data=f"topic_{x}")] for x in t]
+    topics = [r[0] for r in cur.fetchall()]
+    btn = [[InlineKeyboardButton(t, callback_data=f"topic_{t}")] for t in topics]
     btn.append([InlineKeyboardButton("⬅️ Back", callback_data="start_new")])
     return InlineKeyboardMarkup(btn)
 
 # ================= START =================
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    cancel_timer(ctx)
     ctx.user_data.clear()
-    await update.message.reply_text("👋 *Select Exam*", parse_mode="Markdown", reply_markup=exam_kb())
+    await update.message.reply_text(
+        "👋 *Welcome*\n\nSelect Exam 👇",
+        parse_mode="Markdown",
+        reply_markup=exam_kb()
+    )
 
-async def start_new(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
+async def start_new(update: Update, ctx):
+    q = update.callback_query
+    await q.answer()
+    cancel_timer(ctx)
     ctx.user_data.clear()
     await safe_edit_or_send(q, "👋 *Select Exam*", exam_kb())
 
 # ================= EXAM / TOPIC =================
 async def exam_select(update: Update, ctx):
-    q = update.callback_query; await q.answer()
+    q = update.callback_query
+    await q.answer()
+    cancel_timer(ctx)
     ctx.user_data.clear()
     ctx.user_data["exam"] = q.data.replace("exam_", "")
     await safe_edit_or_send(q, "Choose Topic 👇", topic_kb(ctx.user_data["exam"]))
 
 async def topic_select(update: Update, ctx):
-    q = update.callback_query; await q.answer()
+    q = update.callback_query
+    await q.answer()
+
     exam = ctx.user_data.get("exam")
     topic = q.data.replace("topic_", "")
     if not exam:
-        await safe_edit_or_send(q, "⚠️ Session expired", home_kb()); return
+        await safe_edit_or_send(q, "⚠️ Session expired", home_kb())
+        return
 
     cur.execute("SELECT COUNT(*) FROM mcq WHERE exam=? AND topic=?", (exam, topic))
     total = cur.fetchone()[0]
     if total == 0:
-        await safe_edit_or_send(q, "❌ No questions", home_kb()); return
+        await safe_edit_or_send(q, "❌ No questions", home_kb())
+        return
 
     ctx.user_data.update({
         "topic": topic, "score": 0, "q_no": 0,
@@ -121,42 +138,58 @@ async def topic_select(update: Update, ctx):
 
 # ================= TIMER =================
 async def timeout(ctx: ContextTypes.DEFAULT_TYPE):
-    if "current" not in ctx.user_data: return
-    q = ctx.job.data["q"]
+    if not ctx.user_data or "current" not in ctx.user_data:
+        return
+
+    q = ctx.job.data.get("q")
+    if not q:
+        return
+
     m = ctx.user_data["current"]
+
     ctx.user_data["attempts"].append({
-        "question": m[3], "correct": m[8],
-        "explanation": m[9], "selected": "⏱ Time Up"
+        "question": m[3],
+        "correct": m[8],
+        "explanation": m[9],
+        "selected": "⏱ Time Up"
     })
+
     ctx.user_data["q_no"] += 1
+    ctx.user_data["timer"] = None
+
     await send_mcq(q, ctx)
 
 # ================= MCQ =================
 async def send_mcq(q, ctx):
-    if ctx.user_data.get("timer"):
-        ctx.user_data["timer"].cancel_timer(ctx)
+    cancel_timer(ctx)
 
     exam, topic = ctx.user_data["exam"], ctx.user_data["topic"]
     asked = ctx.user_data["asked"]
 
     if asked:
         ph = ",".join("?" * len(asked))
-        cur.execute(f"SELECT * FROM mcq WHERE exam=? AND topic=? AND id NOT IN ({ph}) ORDER BY RANDOM() LIMIT 1",
-                    [exam, topic] + asked)
+        cur.execute(
+            f"SELECT * FROM mcq WHERE exam=? AND topic=? AND id NOT IN ({ph}) ORDER BY RANDOM() LIMIT 1",
+            [exam, topic] + asked
+        )
     else:
-        cur.execute("SELECT * FROM mcq WHERE exam=? AND topic=? ORDER BY RANDOM() LIMIT 1", (exam, topic))
+        cur.execute(
+            "SELECT * FROM mcq WHERE exam=? AND topic=? ORDER BY RANDOM() LIMIT 1",
+            (exam, topic)
+        )
 
     m = cur.fetchone()
     if not m:
-        await show_result(q, ctx); return
+        await show_result(q, ctx)
+        return
 
     ctx.user_data["current"] = m
     ctx.user_data["asked"].append(m[0])
 
     await safe_edit_or_send(
         q,
-        f"❓ *Q{ctx.user_data['q_no']+1}/{ctx.user_data['limit']}*\n\n{m[3]}\n\n"
-        f"A. {m[4]}\nB. {m[5]}\nC. {m[6]}\nD. {m[7]}\n\n⏱ {QUESTION_TIME}s",
+        f"❓ *Q{ctx.user_data['q_no']+1}/{ctx.user_data['limit']}*\n\n"
+        f"{m[3]}\n\nA. {m[4]}\nB. {m[5]}\nC. {m[6]}\nD. {m[7]}\n\n⏱ {QUESTION_TIME}s",
         InlineKeyboardMarkup([
             [InlineKeyboardButton("A", callback_data="ans_A"),
              InlineKeyboardButton("B", callback_data="ans_B")],
@@ -171,20 +204,24 @@ async def send_mcq(q, ctx):
     )
 
 async def answer(update: Update, ctx):
-    q = update.callback_query; await q.answer()
-    if ctx.user_data.get("timer"):
-        ctx.user_data["timer"].cancel_timer(ctx)
+    q = update.callback_query
+    await q.answer()
+    cancel_timer(ctx)
 
     m = ctx.user_data["current"]
     sel = q.data.split("_")[1]
 
     ctx.user_data["attempts"].append({
-        "question": m[3], "correct": m[8],
-        "explanation": m[9], "selected": sel
+        "question": m[3],
+        "correct": m[8],
+        "explanation": m[9],
+        "selected": sel
     })
 
-    if sel == m[8]: ctx.user_data["score"] += 1
-    else: ctx.user_data["wrong"].append(m)
+    if sel == m[8]:
+        ctx.user_data["score"] += 1
+    else:
+        ctx.user_data["wrong"].append(m)
 
     ctx.user_data["q_no"] += 1
     await send_mcq(q, ctx)
@@ -213,17 +250,20 @@ async def show_result(q, ctx):
 
 # ================= REVIEW / WRONG =================
 async def review_all(update, ctx):
-    q = update.callback_query; await q.answer()
+    q = update.callback_query
+    await q.answer()
     text = "📋 *Review All*\n\n"
     for i,a in enumerate(ctx.user_data.get("attempts", []),1):
         text += f"*Q{i}.* {a['question']}\nYour: {a['selected']} | Correct: {a['correct']}\n📘 {a['explanation']}\n\n"
     await safe_edit_or_send(q, text, home_kb())
 
 async def wrong_only(update, ctx):
-    q = update.callback_query; await q.answer()
+    q = update.callback_query
+    await q.answer()
     w = ctx.user_data.get("wrong", [])
     if not w:
-        await safe_edit_or_send(q, "🎉 No wrong questions", home_kb()); return
+        await safe_edit_or_send(q, "🎉 No wrong questions", home_kb())
+        return
     ctx.user_data["widx"] = 0
     await show_wrong(q, ctx)
 
@@ -231,7 +271,8 @@ async def show_wrong(q, ctx):
     i = ctx.user_data["widx"]
     w = ctx.user_data["wrong"]
     if i >= len(w):
-        await safe_edit_or_send(q, "✅ Completed", home_kb()); return
+        await safe_edit_or_send(q, "✅ Completed", home_kb())
+        return
     m = w[i]
     await safe_edit_or_send(
         q,
@@ -244,26 +285,34 @@ async def show_wrong(q, ctx):
     )
 
 async def wrong_next(update, ctx):
-    q = update.callback_query; await q.answer()
+    q = update.callback_query
+    await q.answer()
     ctx.user_data["widx"] += 1
     await show_wrong(q, ctx)
 
 async def wrong_prev(update, ctx):
-    q = update.callback_query; await q.answer()
+    q = update.callback_query
+    await q.answer()
     ctx.user_data["widx"] = max(0, ctx.user_data["widx"]-1)
     await show_wrong(q, ctx)
 
 # ================= LEADERBOARD =================
 async def leaderboard(update, ctx):
-    q = update.callback_query; await q.answer()
+    q = update.callback_query
+    await q.answer()
     e,t = ctx.user_data.get("exam"), ctx.user_data.get("topic")
     if not e or not t:
-        await safe_edit_or_send(q, "⚠️ Take a test first", home_kb()); return
-    cur.execute("""SELECT user_id, MAX(score) FROM scores
-                   WHERE exam=? AND topic=? GROUP BY user_id
-                   ORDER BY MAX(score) DESC LIMIT 10""",(e,t))
+        await safe_edit_or_send(q, "⚠️ Take a test first", home_kb())
+        return
+    cur.execute("""
+        SELECT user_id, MAX(score) FROM scores
+        WHERE exam=? AND topic=? GROUP BY user_id
+        ORDER BY MAX(score) DESC LIMIT 10
+    """,(e,t))
     rows = cur.fetchall()
-    text = f"🏆 *{e}/{t}*\n\n" + "\n".join([f"{i+1}. `{r[0]}` → {r[1]}" for i,r in enumerate(rows)])
+    text = f"🏆 *{e}/{t}*\n\n"
+    for i,r in enumerate(rows,1):
+        text += f"{i}. `{r[0]}` → {r[1]}\n"
     await safe_edit_or_send(q, text or "No data", home_kb())
 
 # ================= PDF =================
@@ -298,12 +347,19 @@ def generate_pdf(uid, exam, topic, att, sc, tot):
     return f
 
 async def pdf_result(update, ctx):
-    q = update.callback_query; await q.answer()
+    q = update.callback_query
+    await q.answer()
     if "exam" not in ctx.user_data:
-        await safe_edit_or_send(q,"⚠️ No active test",home_kb()); return
-    f = generate_pdf(q.from_user.id, ctx.user_data["exam"],
-                     ctx.user_data["topic"], ctx.user_data["attempts"],
-                     ctx.user_data["score"], ctx.user_data["q_no"])
+        await safe_edit_or_send(q,"⚠️ No active test",home_kb())
+        return
+    f = generate_pdf(
+        q.from_user.id,
+        ctx.user_data["exam"],
+        ctx.user_data["topic"],
+        ctx.user_data["attempts"],
+        ctx.user_data["score"],
+        ctx.user_data["q_no"]
+    )
     await ctx.bot.send_document(q.from_user.id, open(f,"rb"))
     await ctx.bot.send_message(q.from_user.id,"📄 PDF Ready",reply_markup=home_kb())
 
@@ -312,7 +368,9 @@ async def admin(update, ctx):
     if not is_admin(update.effective_user.id): return
     cur.execute("SELECT exam, topic, COUNT(*) FROM mcq GROUP BY exam, topic")
     rows = cur.fetchall()
-    t="👨‍💼 *ADMIN*\n\n"+ "\n".join([f"{r[0]}/{r[1]} → {r[2]}" for r in rows])
+    t="👨‍💼 *ADMIN*\n\n"
+    for r in rows:
+        t+=f"{r[0]}/{r[1]} → {r[2]}\n"
     await update.message.reply_text(
         t, parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([
@@ -322,7 +380,8 @@ async def admin(update, ctx):
     )
 
 async def admin_upload(update, ctx):
-    q=update.callback_query; await q.answer()
+    q=update.callback_query
+    await q.answer()
     await q.message.reply_text("📤 Upload Excel (.xlsx)")
 
 async def upload(update, ctx):
@@ -335,44 +394,19 @@ async def handle_excel(update, ctx):
     await f.download_to_drive("upload.xlsx")
     df=pd.read_excel("upload.xlsx")
     for _,r in df.iterrows():
-        cur.execute("INSERT INTO mcq VALUES(NULL,?,?,?,?,?,?,?,?,?)",
-                    (r.exam,r.topic,r.question,r.a,r.b,r.c,r.d,r.correct,r.explanation))
+        cur.execute(
+            "INSERT INTO mcq VALUES(NULL,?,?,?,?,?,?,?,?,?)",
+            (r.exam,r.topic,r.question,r.a,r.b,r.c,r.d,r.correct,r.explanation)
+        )
     conn.commit()
     await update.message.reply_text(f"✅ {len(df)} MCQs added")
 
 async def admin_export(update, ctx):
-    q=update.callback_query; await q.answer()
+    q=update.callback_query
+    await q.answer()
     df=pd.read_sql_query("SELECT * FROM mcq",conn)
     df.to_excel("MCQ_DB.xlsx",index=False)
     await ctx.bot.send_document(q.from_user.id,open("MCQ_DB.xlsx","rb"))
-
-# ================= MY SCORE =================
-async def myscore(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if update.callback_query:
-        q = update.callback_query
-        await q.answer()
-        send = q.edit_message_text
-    else:
-        send = update.message.reply_text
-
-    cur.execute("""
-        SELECT exam, topic, score, total, test_date
-        FROM scores
-        WHERE user_id=?
-        ORDER BY id DESC
-        LIMIT 5
-    """, (update.effective_user.id,))
-    rows = cur.fetchall()
-
-    if not rows:
-        await send("❌ *No test history found.*", parse_mode="Markdown", reply_markup=home_kb())
-        return
-
-    text = "📊 *My Recent Tests*\n\n"
-    for r in rows:
-        text += f"{r[0]} / {r[1]} → {r[2]}/{r[3]} ({r[4]})\n"
-
-    await send(text, parse_mode="Markdown", reply_markup=home_kb())
 
 # ================= MAIN =================
 def main():
@@ -381,7 +415,6 @@ def main():
     app.add_handler(CommandHandler("start",start))
     app.add_handler(CommandHandler("admin",admin))
     app.add_handler(CommandHandler("upload",upload))
-    app.add_handler(CommandHandler("myscore",myscore))
 
     app.add_handler(MessageHandler(filters.Document.ALL,handle_excel))
 
@@ -393,7 +426,6 @@ def main():
     app.add_handler(CallbackQueryHandler(wrong_next,"^wrong_next$"))
     app.add_handler(CallbackQueryHandler(wrong_prev,"^wrong_prev$"))
     app.add_handler(CallbackQueryHandler(review_all,"^review_all$"))
-    app.add_handler(CallbackQueryHandler(myscore,"^myscore$"))
     app.add_handler(CallbackQueryHandler(leaderboard,"^leaderboard$"))
     app.add_handler(CallbackQueryHandler(pdf_result,"^pdf_result$"))
     app.add_handler(CallbackQueryHandler(admin_upload,"^admin_upload$"))
@@ -404,6 +436,3 @@ def main():
 
 if __name__=="__main__":
     main()
-
-
-
