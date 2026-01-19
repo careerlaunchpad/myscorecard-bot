@@ -35,6 +35,15 @@ CREATE TABLE IF NOT EXISTS scores (
 )
 """)
 conn.commit()
+# ================= SAFE TIMER CANCEL =================
+def cancel_timer(ctx):
+    job = ctx.user_data.get("timer")
+    if job:
+        try:
+            job.schedule_removal()
+        except Exception:
+            pass
+        ctx.user_data["timer"] = None
 
 # ================= HELPERS =================
 def is_admin(uid): return uid in ADMIN_IDS
@@ -125,7 +134,7 @@ async def timeout(ctx: ContextTypes.DEFAULT_TYPE):
 # ================= MCQ =================
 async def send_mcq(q, ctx):
     if ctx.user_data.get("timer"):
-        ctx.user_data["timer"].schedule_removal()
+        ctx.user_data["timer"].cancel_timer(ctx)
 
     exam, topic = ctx.user_data["exam"], ctx.user_data["topic"]
     asked = ctx.user_data["asked"]
@@ -164,7 +173,7 @@ async def send_mcq(q, ctx):
 async def answer(update: Update, ctx):
     q = update.callback_query; await q.answer()
     if ctx.user_data.get("timer"):
-        ctx.user_data["timer"].schedule_removal()
+        ctx.user_data["timer"].cancel_timer(ctx)
 
     m = ctx.user_data["current"]
     sel = q.data.split("_")[1]
@@ -395,4 +404,5 @@ def main():
 
 if __name__=="__main__":
     main()
+
 
