@@ -355,6 +355,7 @@ async def admin_panel(update, ctx):
         text,
         InlineKeyboardMarkup([
             [InlineKeyboardButton("📤 Upload Excel", callback_data="admin_upload")],
+            [InlineKeyboardButton("✏️ Manage MCQs", callback_data="admin_mcq_list")],
             [InlineKeyboardButton("🧾 Export DB", callback_data="admin_export")],
             [InlineKeyboardButton("⬅️ Back", callback_data="start_new")]
         ])
@@ -391,6 +392,22 @@ async def myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg += f"{r[0]} | {r[1]} → {r[2]}/{r[3]}\n"
     await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=home_kb())
 
+# ================= ADMIN MCQ LIST =================
+async def admin_mcq_list(update, ctx):
+    q = update.callback_query
+    await q.answer()
+    if not is_admin(q.from_user.id):
+        return
+
+    cur.execute("SELECT DISTINCT exam FROM mcq")
+    exams = [r[0] for r in cur.fetchall()]
+
+    kb = [[InlineKeyboardButton(e, callback_data=f"admin_exam_{e}")] for e in exams]
+    kb.append([InlineKeyboardButton("⬅️ Back", callback_data="admin_panel")])
+
+    await safe_edit_or_send(q, "📚 *Select Exam*", InlineKeyboardMarkup(kb))
+
+
 # ================= MAIN =================
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
@@ -419,6 +436,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
