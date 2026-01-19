@@ -12,7 +12,7 @@ from telegram.error import BadRequest
 # ================= CONFIG =================
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS = [1977205811]
-TEST_TIME_SECONDS = 600  # ⏱ 10 minutes
+TEST_TIME = 600  # 10 minutes
 
 # ================= DATABASE =================
 conn = sqlite3.connect("mcq.db", check_same_thread=False)
@@ -20,51 +20,47 @@ cur = conn.cursor()
 
 cur.execute("""
 CREATE TABLE IF NOT EXISTS mcq (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    exam TEXT, topic TEXT,
-    question TEXT,
-    a TEXT, b TEXT, c TEXT, d TEXT,
-    correct TEXT,
-    explanation TEXT
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ exam TEXT, topic TEXT,
+ question TEXT,
+ a TEXT,b TEXT,c TEXT,d TEXT,
+ correct TEXT,
+ explanation TEXT
 )
 """)
 
 cur.execute("""
 CREATE TABLE IF NOT EXISTS scores (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    exam TEXT, topic TEXT,
-    score INTEGER,
-    total INTEGER,
-    test_date TEXT
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ user_id INTEGER,
+ exam TEXT, topic TEXT,
+ score INTEGER,
+ total INTEGER,
+ test_date TEXT
 )
 """)
 conn.commit()
 
 # ================= SAFE HELPERS =================
-async def safe_edit_or_send(q, text, reply_markup=None):
+async def safe_edit_or_send(q, text, kb=None):
     try:
-        await q.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+        await q.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
     except BadRequest as e:
         if "Message is not modified" in str(e):
             return
         try:
-            await q.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+            await q.message.reply_text(text, reply_markup=kb, parse_mode="Markdown")
         except:
             pass
 
-def safe_hindi(t):
-    return unicodedata.normalize("NFKC", str(t)) if t else ""
+def safe_hindi(t): return unicodedata.normalize("NFKC", str(t)) if t else ""
+def is_admin(uid): return uid in ADMIN_IDS
 
-def is_admin(uid):
-    return uid in ADMIN_IDS
-
-# ================= UI HELPERS =================
+# ================= UI =================
 def home_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🏠 Home", callback_data="start_new")],
-        [InlineKeyboardButton("📊 My Score", callback_data="myscore")],
-        [InlineKeyboardButton("📄 Download PDF", callback_data="pdf_result")]
+        [InlineKeyboardButton("📊 My Score", callback_data="myscore")]
     ])
 
 def exam_kb():
@@ -83,7 +79,7 @@ def topic_kb(exam):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     await update.message.reply_text(
-        "👋 *Welcome to MyScoreCard Bot*\n\nSelect Exam 👇",
+        "👋 *Welcome*\n\nSelect Exam 👇",
         parse_mode="Markdown",
         reply_markup=exam_kb()
     )
@@ -92,30 +88,24 @@ async def start_new(update, context):
     q = update.callback_query
     await q.answer()
     context.user_data.clear()
-    await safe_edit_or_send(q, "👋 *Welcome*\n\nSelect Exam 👇", exam_kb())
+    await safe_edit_or_send(q, "Select Exam 👇", exam_kb())
 
 # ================= TIMER =================
-async def time_up(context: ContextTypes.DEFAULT_TYPE):
-    job = context.job
-    q = job.data["query"]
-    ctx = job.data["context"]
-    if ctx.user_data.get("test_running"):
-        ctx.user_data["test_running"] = False
-        await safe_edit_or_send(
-            q,
-            "⏱ *Time Up! Test auto-submitted.*",
-            home_kb()
-        )
-        await show_result(q, ctx)
+async def time_up(ctx: ContextTypes.DEFAULT_TYPE):
+    data = ctx.job.data
+    q = data["q"]
+    context = data["context"]
+    if context.user_data.get("running"):
+        context.user_data["running"] = False
+        await show_result(q, context)
 
 # ================= EXAM / TOPIC =================
 async def exam_select(update, context):
     q = update.callback_query
     await q.answer()
-    exam = q.data.replace("exam_", "")
     context.user_data.clear()
-    context.user_data["exam"] = exam
-    await safe_edit_or_send(q, "Choose Topic 👇", topic_kb(exam))
+    context.user_data["exam"] = q.data.replace("exam_", "")
+    await safe_edit_or_send(q, "Choose Topic 👇", topic_kb(context.user_data["exam"]))
 
 async def topic_select(update, context):
     q = update.callback_query
@@ -138,24 +128,24 @@ async def topic_select(update, context):
         "asked": [],
         "wrong": [],
         "attempts": [],
-        "test_running": True
+        "review": [],
+        "running": True
     })
 
-    # ⏱ start timer
     context.job_queue.run_once(
-        time_up,
-        TEST_TIME_SECONDS,
-        data={"query": q, "context": context}
+        time_up, TEST_TIME,
+        data={"q": q, "context": context}
     )
 
     await send_mcq(q, context)
 
-# ================= MCQ FLOW =================
+# ================= MCQ =================
 async def send_mcq(q, context):
-    if not context.user_data.get("test_running"):
+    if not context.user_data.get("running"):
         return
 
-    exam, topic = context.user_data["exam"], context.user_data["topic"]
+    exam = context.user_data["exam"]
+    topic = context.user_data["topic"]
     asked = context.user_data["asked"]
 
     if asked:
@@ -165,18 +155,15 @@ async def send_mcq(q, context):
             [exam, topic] + asked
         )
     else:
-        cur.execute(
-            "SELECT * FROM mcq WHERE exam=? AND topic=? ORDER BY RANDOM() LIMIT 1",
-            (exam, topic)
-        )
+        cur.execute("SELECT * FROM mcq WHERE exam=? AND topic=? ORDER BY RANDOM() LIMIT 1", (exam, topic))
 
     mcq = cur.fetchone()
     if not mcq:
         await show_result(q, context)
         return
 
-    context.user_data["asked"].append(mcq[0])
     context.user_data["current"] = mcq
+    context.user_data["asked"].append(mcq[0])
 
     await safe_edit_or_send(
         q,
@@ -193,20 +180,18 @@ async def send_mcq(q, context):
 async def answer(update, context):
     q = update.callback_query
     await q.answer()
-
-    if not context.user_data.get("test_running"):
-        return
-
     mcq = context.user_data["current"]
     sel = q.data.split("_")[1]
 
-    context.user_data["attempts"].append({
-        "question": mcq[3],
-        "correct": mcq[8],
-        "explanation": mcq[9]
+    correct = mcq[8]
+    is_right = sel == correct
+
+    context.user_data["review"].append({
+        "q": mcq[3], "sel": sel, "correct": correct,
+        "exp": mcq[9]
     })
 
-    if sel == mcq[8]:
+    if is_right:
         context.user_data["score"] += 1
     else:
         context.user_data["wrong"].append(mcq)
@@ -219,7 +204,7 @@ async def answer(update, context):
 
 # ================= RESULT =================
 async def show_result(q, context):
-    context.user_data["test_running"] = False
+    context.user_data["running"] = False
 
     cur.execute(
         "INSERT INTO scores VALUES(NULL,?,?,?,?,?,?)",
@@ -238,49 +223,70 @@ async def show_result(q, context):
         q,
         f"🎯 *Test Completed*\n\nScore: *{context.user_data['score']}/{context.user_data['q_no']}*",
         InlineKeyboardMarkup([
-            [InlineKeyboardButton("❌ Wrong Practice", callback_data="wrong_only")],
-            [InlineKeyboardButton("📄 Download PDF", callback_data="pdf_result")],
-            [InlineKeyboardButton("🏆 Leaderboard", callback_data="leaderboard")],
+            [InlineKeyboardButton("📖 Review All Questions", callback_data="review_all")],
+            [InlineKeyboardButton("❌ Wrong Only", callback_data="wrong_only")],
+            [InlineKeyboardButton("🏆 Subject Leaderboard", callback_data="sub_leader")],
             [InlineKeyboardButton("🏠 Home", callback_data="start_new")]
         ])
     )
 
-# ================= LEADERBOARD =================
-async def leaderboard(update, context):
-    send = update.message.reply_text if update.message else update.callback_query.edit_message_text
+# ================= REVIEW =================
+async def review_all(update, context):
+    q = update.callback_query
+    await q.answer()
+
+    text = "📖 *Review*\n\n"
+    for i, r in enumerate(context.user_data["review"], 1):
+        text += (
+            f"*Q{i}* {r['q']}\n"
+            f"Your: {r['sel']} | Correct: {r['correct']}\n"
+            f"{r['exp']}\n\n"
+        )
+
+    await safe_edit_or_send(q, text, InlineKeyboardMarkup([
+        [InlineKeyboardButton("⬅️ Back", callback_data="start_new")]
+    ]))
+
+# ================= SUBJECT LEADERBOARD =================
+async def sub_leader(update, context):
+    q = update.callback_query
+    await q.answer()
+
+    exam = context.user_data["exam"]
+    topic = context.user_data["topic"]
 
     cur.execute("""
-        SELECT user_id, MAX(score) as best
-        FROM scores
-        GROUP BY user_id
-        ORDER BY best DESC
-        LIMIT 10
-    """)
+    SELECT user_id, MAX(score) FROM scores
+    WHERE exam=? AND topic=?
+    GROUP BY user_id
+    ORDER BY MAX(score) DESC LIMIT 10
+    """, (exam, topic))
+
     rows = cur.fetchall()
-
-    if not rows:
-        await send("No data yet")
-        return
-
-    msg = "🏆 *Top Rankers*\n\n"
+    msg = f"🏆 *{exam} – {topic}*\n\n"
     for i, r in enumerate(rows, 1):
         msg += f"{i}. User {r[0]} → {r[1]}\n"
 
-    await send(msg, parse_mode="Markdown", reply_markup=home_kb())
+    await safe_edit_or_send(q, msg, InlineKeyboardMarkup([
+        [InlineKeyboardButton("⬅️ Back", callback_data="start_new")]
+    ]))
 
-# ================= ADMIN DELETE MCQ =================
+# ================= ADMIN EDIT / DELETE =================
 async def admin(update, context):
     if not is_admin(update.effective_user.id):
         return
 
-    cur.execute("SELECT id, exam, topic FROM mcq ORDER BY id DESC LIMIT 10")
+    cur.execute("SELECT id, question FROM mcq ORDER BY id DESC LIMIT 10")
     rows = cur.fetchall()
 
-    msg = "🛠 *ADMIN – Recent MCQs*\n\n"
     kb = []
+    msg = "🛠 *Admin MCQs*\n\n"
     for r in rows:
-        msg += f"ID {r[0]} | {r[1]} – {r[2]}\n"
-        kb.append([InlineKeyboardButton(f"❌ Delete {r[0]}", callback_data=f"del_{r[0]}")])
+        msg += f"ID {r[0]}: {r[1][:30]}...\n"
+        kb.append([
+            InlineKeyboardButton("✏️ Edit", callback_data=f"edit_{r[0]}"),
+            InlineKeyboardButton("❌ Delete", callback_data=f"del_{r[0]}")
+        ])
 
     await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
@@ -289,11 +295,9 @@ async def delete_mcq(update, context):
     await q.answer()
     if not is_admin(q.from_user.id):
         return
-
     mcq_id = int(q.data.replace("del_", ""))
     cur.execute("DELETE FROM mcq WHERE id=?", (mcq_id,))
     conn.commit()
-
     await safe_edit_or_send(q, f"✅ MCQ {mcq_id} deleted", home_kb())
 
 # ================= MAIN =================
@@ -302,13 +306,13 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin))
-    app.add_handler(CommandHandler("leaderboard", leaderboard))
 
     app.add_handler(CallbackQueryHandler(start_new, "^start_new$"))
     app.add_handler(CallbackQueryHandler(exam_select, "^exam_"))
     app.add_handler(CallbackQueryHandler(topic_select, "^topic_"))
     app.add_handler(CallbackQueryHandler(answer, "^ans_"))
-    app.add_handler(CallbackQueryHandler(leaderboard, "^leaderboard$"))
+    app.add_handler(CallbackQueryHandler(review_all, "^review_all$"))
+    app.add_handler(CallbackQueryHandler(sub_leader, "^sub_leader$"))
     app.add_handler(CallbackQueryHandler(delete_mcq, "^del_"))
 
     print("🤖 Bot Running...")
