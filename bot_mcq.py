@@ -562,6 +562,7 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("myscore", myscore))
+    app.add_handler(CallbackQueryHandler(myscore, "^myscore$"))
     app.add_handler(CommandHandler("admin", admin))
     #app.add_handler(CommandHandler("upload", upload))
 
@@ -574,7 +575,7 @@ def main():
     app.add_handler(CallbackQueryHandler(wrong_only, "^wrong_only$"))
     app.add_handler(CallbackQueryHandler(wrong_next, "^wrong_next$"))
     app.add_handler(CallbackQueryHandler(wrong_prev, "^wrong_prev$"))
-    #app.add_handler(CallbackQueryHandler(myscore, "^myscore$"))
+    
     app.add_handler(CallbackQueryHandler(pdf_result, "^pdf_result$"))
 
     # ✅ FINAL EXTENSION HANDLERS
@@ -587,6 +588,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
