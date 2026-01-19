@@ -606,7 +606,7 @@ def main():
     app.add_handler(CallbackQueryHandler(pdf_result, "^pdf_result$"))
 
     # ✅ FINAL EXTENSION HANDLERS
-    register_final_handlers(app)
+    #register_final_handlers(app)
 
     print("🤖 Bot Running...")
     app.run_polling()
@@ -615,6 +615,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
