@@ -304,6 +304,16 @@ async def pdf_result(update, ctx):
     await ctx.bot.send_document(q.from_user.id, open(f,"rb"))
     await ctx.bot.send_message(q.from_user.id,"📄 PDF Ready",reply_markup=home_kb())
 
+# ================= myscore PANEL =================
+async def myscore(update,ctx):
+    uid=update.effective_user.id
+    cur.execute("SELECT exam,topic,score,total FROM scores WHERE user_id=? ORDER BY id DESC LIMIT 5",(uid,))
+    rows=cur.fetchall()
+    txt="📊 *My Score*\n\n"
+    for r in rows:
+        txt+=f"{r[0]}/{r[1]} → {r[2]}/{r[3]}\n"
+    await update.message.reply_text(txt,parse_mode="Markdown",reply_markup=home_kb())
+
 # ================= ADMIN PANEL =================
 async def admin_panel(update, ctx):
     q=update.callback_query; await q.answer()
@@ -317,6 +327,32 @@ async def admin_panel(update, ctx):
             [InlineKeyboardButton("⬅️ Back",callback_data="start_new")]
         ])
     )
+async def admin_upload(update,ctx):
+    q=update.callback_query; await q.answer()
+    ctx.user_data["awaiting_excel"]=True
+    await q.message.reply_text(
+        "📤 Upload Excel (.xlsx)\nColumns:\nexam, topic, question, a, b, c, d, correct, explanation"
+    )
+
+async def handle_excel(update:Update,ctx):
+    if not is_admin(update.effective_user.id): return
+    if not ctx.user_data.get("awaiting_excel"): return
+
+    ctx.user_data["awaiting_excel"]=False
+    f=await update.message.document.get_file()
+    p=tempfile.mktemp(".xlsx")
+    await f.download_to_drive(p)
+
+    df=pd.read_excel(p)
+    for _,r in df.iterrows():
+        cur.execute(
+            "INSERT INTO mcq VALUES(NULL,?,?,?,?,?,?,?,?,?)",
+            (r.exam,r.topic,r.question,r.a,r.b,r.c,r.d,r.correct,r.explanation)
+        )
+    conn.commit()
+
+    await update.message.reply_text(f"✅ {len(df)} MCQs uploaded",reply_markup=home_kb())
+
 
 # ================= ADMIN SEARCH =================
 async def admin_search(update, ctx):
@@ -364,7 +400,7 @@ def main():
     app=ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start",start))
-    #app.add_handler(CommandHandler("myscore",myscore))
+    app.add_handler(CommandHandler("myscore",myscore))
     app.add_handler(CommandHandler("upload",upload))
 
     app.add_handler(MessageHandler(filters.TEXT & filters.User(ADMIN_IDS),admin_search_text))
@@ -390,4 +426,5 @@ def main():
 
 if __name__=="__main__":
     main()
+
 
