@@ -557,16 +557,17 @@ async def admin_export(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # ================= FINAL HANDLERS =================
-def main():
+def register_final_handlers(app):
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("myscore", myscore))
+    
     app.add_handler(CallbackQueryHandler(myscore, "^myscore$"))
     app.add_handler(CommandHandler("admin", admin))
-    #app.add_handler(CommandHandler("upload", upload))
-
-   # app.add_handler(MessageHandler(filters.Document.ALL, handle_excel))
+    
+    app.add_handler(CommandHandler("upload", upload))
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_excel))
 
     app.add_handler(CallbackQueryHandler(start_new, "^start_new$"))
     app.add_handler(CallbackQueryHandler(exam_select, "^exam_"))
@@ -588,10 +589,6 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
 
 
 
