@@ -389,6 +389,38 @@ async def wrong_prev(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 QUESTION_TIME = 20  # seconds per question
 
+# ================= MY SCORE =================
+async def myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query:
+        q = update.callback_query
+        await q.answer()
+        send = q.edit_message_text
+    else:
+        send = update.message.reply_text
+
+    cur.execute("""
+        SELECT exam, topic, score, total, test_date
+        FROM scores
+        WHERE user_id=?
+        ORDER BY id DESC
+        LIMIT 10
+    """, (update.effective_user.id,))
+    rows = cur.fetchall()
+
+    if not rows:
+        await send("❌ No score history.", reply_markup=home_kb())
+        return
+
+    text = "📊 *Your Test History*\n\n"
+    for r in rows:
+        text += f"{r[0]} | {r[1]} → {r[2]}/{r[3]} ({r[4]})\n"
+
+    await send(
+        text,
+        parse_mode="Markdown",
+        reply_markup=home_kb()
+    )
+
 # ================= LEADERBOARD =================
 async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -529,7 +561,7 @@ def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    #app.add_handler(CommandHandler("myscore", myscore))
+    app.add_handler(CommandHandler("myscore", myscore))
     app.add_handler(CommandHandler("admin", admin))
     #app.add_handler(CommandHandler("upload", upload))
 
@@ -555,6 +587,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
