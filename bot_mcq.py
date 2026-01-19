@@ -583,7 +583,7 @@ async def handle_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ {len(df)} MCQs uploaded successfully")
 
 # ================= FINAL HANDLERS =================
-def register_final_handlers(app):
+def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
