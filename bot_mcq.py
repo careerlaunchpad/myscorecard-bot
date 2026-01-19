@@ -387,7 +387,7 @@ def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("myscore", myscore))
+    #app.add_handler(CommandHandler("myscore", myscore))
     app.add_handler(CommandHandler("upload", upload))
 
     app.add_handler(CallbackQueryHandler(start_new,"^start_new$"))
@@ -410,3 +410,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
