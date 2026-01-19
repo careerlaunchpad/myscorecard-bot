@@ -555,3 +555,7 @@ def main():
 
     print("🤖 Bot Running...")
     app.run_polling()
+    
+if __name__ == "__main__":
+    main()
+
