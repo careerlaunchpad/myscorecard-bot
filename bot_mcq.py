@@ -358,6 +358,35 @@ async def admin_export(update, ctx):
     p=tempfile.mktemp(".xlsx")
     df.to_excel(p,index=False)
     await ctx.bot.send_document(q.from_user.id,open(p,"rb"))
+async def myscore(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+
+    cur.execute("""
+        SELECT exam, topic, score, total, test_date
+        FROM scores
+        WHERE user_id=?
+        ORDER BY id DESC
+        LIMIT 5
+    """, (uid,))
+
+    rows = cur.fetchall()
+    if not rows:
+        await update.message.reply_text(
+            "📊 *No test history found*",
+            parse_mode="Markdown",
+            reply_markup=home_kb()
+        )
+        return
+
+    text = "📊 *Your Recent Tests*\n\n"
+    for r in rows:
+        text += f"📝 {r[0]} / {r[1]} → *{r[2]}/{r[3]}* ({r[4]})\n"
+
+    await update.message.reply_text(
+        text,
+        parse_mode="Markdown",
+        reply_markup=home_kb()
+    )
 
 # ================= MAIN =================
 def main():
@@ -385,8 +414,12 @@ def main():
     app.add_handler(CallbackQueryHandler(admin_search,"^admin_search$"))
     app.add_handler(CallbackQueryHandler(admin_export,"^admin_export$"))
 
+    app.add_handler(CommandHandler("myscore", myscore))
+
+
     print("🤖 Bot Running...")
     app.run_polling()
 
 if __name__=="__main__":
     main()
+
