@@ -13,6 +13,8 @@ from telegram.ext import (
     ContextTypes,
     filters
 )
+from telegram.error import BadRequest
+
 
 # ================= CONFIG =================
 TOKEN = os.getenv("BOT_TOKEN")
@@ -51,11 +53,38 @@ CREATE TABLE IF NOT EXISTS scores (
 conn.commit()
 
 # ================= SAFE HELPERS =================
-async def safe_edit_or_send(q, text, reply_markup=None):
+"""async def safe_edit_or_send(q, text, reply_markup=None):
     try:
         await q.edit_message_text(text=text, reply_markup=reply_markup, parse_mode="Markdown")
     except Exception:
-        await q.message.reply_text(text=text, reply_markup=reply_markup, parse_mode="Markdown")
+        await q.message.reply_text(text=text, reply_markup=reply_markup, parse_mode="Markdown")"""
+async def safe_edit_or_send(q, text, reply_markup=None):
+    """
+    Safe message editor:
+    - avoids 'Message is not modified' crash
+    - avoids dead ends
+    - production safe
+    """
+    try:
+        await q.edit_message_text(
+            text=text,
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
+        )
+    except BadRequest as e:
+        # ✅ Telegram throws this when text+keyboard are same
+        if "Message is not modified" in str(e):
+            return
+        # 🔁 otherwise safely send new message
+        try:
+            await q.message.reply_text(
+                text=text,
+                reply_markup=reply_markup,
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
+
 
 def safe_hindi(text):
     if not text:
@@ -461,3 +490,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
