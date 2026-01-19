@@ -555,6 +555,32 @@ async def admin_export(update: Update, context: ContextTypes.DEFAULT_TYPE):
         document=open(file, "rb"),
         filename=file
     )
+# ================= ADMIN UPLOAD =================
+async def upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+    await update.message.reply_text(
+        "📤 Upload Excel (.xlsx)\nColumns:\nexam, topic, question, a, b, c, d, correct, explanation"
+    )
+
+async def handle_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+
+    file = await update.message.document.get_file()
+    path = "upload.xlsx"
+    await file.download_to_drive(path)
+
+    df = pd.read_excel(path)
+
+    for _, r in df.iterrows():
+        cur.execute(
+            "INSERT INTO mcq VALUES (NULL,?,?,?,?,?,?,?,?,?)",
+            (r.exam, r.topic, r.question, r.a, r.b, r.c, r.d, r.correct, r.explanation)
+        )
+
+    conn.commit()
+    await update.message.reply_text(f"✅ {len(df)} MCQs uploaded successfully")
 
 # ================= FINAL HANDLERS =================
 def register_final_handlers(app):
@@ -589,6 +615,7 @@ def register_final_handlers(app):
 
 if __name__ == "__main__":
     main()
+
 
 
 
