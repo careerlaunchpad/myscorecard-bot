@@ -276,6 +276,55 @@ async def myscore(update: Update, ctx):
         msg += f"{r[0]} / {r[1]} → *{r[2]}/{r[3]}* ({r[4]})\n"
 
     await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=home_kb())
+# ================= PDF RESULT =================
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.lib.pagesizes import A4
+
+pdfmetrics.registerFont(TTFont("Hindi", "NotoSansDevanagari-Regular.ttf"))
+
+async def pdf_result(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    if "attempts" not in ctx.user_data:
+        await safe_edit_or_send(q, "⚠️ No test data available", home_kb())
+        return
+
+    file_path = f"MyScore_{q.from_user.id}.pdf"
+    doc = SimpleDocTemplate(file_path, pagesize=A4)
+
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(name="H", fontName="Hindi", fontSize=11))
+
+    story = [
+        Paragraph("MyScoreCard – टेस्ट परिणाम", styles["H"]),
+        Spacer(1, 10)
+    ]
+
+    for i, a in enumerate(ctx.user_data["attempts"], 1):
+        story.extend([
+            Paragraph(f"प्रश्न {i}: {safe_hindi(a['question'])}", styles["H"]),
+            Paragraph(f"आपका उत्तर: {safe_hindi(a['chosen'])}", styles["H"]),
+            Paragraph(f"सही उत्तर: {safe_hindi(a['correct'])}", styles["H"]),
+            Paragraph(f"व्याख्या: {safe_hindi(a['explanation'])}", styles["H"]),
+            Spacer(1, 8)
+        ])
+
+    doc.build(story)
+
+    await ctx.bot.send_document(
+        chat_id=q.from_user.id,
+        document=open(file_path, "rb")
+    )
+
+    await ctx.bot.send_message(
+        chat_id=q.from_user.id,
+        text="📄 PDF Generated Successfully",
+        reply_markup=home_kb()
+    )
 
 # ================= ADMIN =================
 async def admin_panel(update, ctx):
@@ -345,7 +394,7 @@ def main():
     app.add_handler(CallbackQueryHandler(review_all, "^review_all$"))
     app.add_handler(CallbackQueryHandler(wrong_only, "^wrong_only$"))
     app.add_handler(CallbackQueryHandler(leaderboard, "^leaderboard$"))
-    #app.add_handler(CallbackQueryHandler(pdf_result, "^pdf_result$"))
+    app.add_handler(CallbackQueryHandler(pdf_result, "^pdf_result$"))
     app.add_handler(CallbackQueryHandler(admin_panel, "^admin_panel$"))
     app.add_handler(CallbackQueryHandler(admin_upload, "^admin_upload$"))
     app.add_handler(CallbackQueryHandler(admin_export, "^admin_export$"))
@@ -355,4 +404,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
