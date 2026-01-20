@@ -258,24 +258,30 @@ async def leaderboard(update, ctx):
     await safe_edit_or_send(q, text, home_kb())
 
 # ================= MY SCORE =================
-async def myscore(update: Update, ctx):
-    uid = update.effective_user.id
-    cur.execute("""
-        SELECT exam, topic, score, total, test_date
-        FROM scores WHERE user_id=?
-        ORDER BY id DESC LIMIT 5
-    """,(uid,))
+# ================= MY SCORE =================
+async def myscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query:
+        q = update.callback_query
+        await q.answer()
+        send = q.edit_message_text
+    else:
+        send = update.message.reply_text
+
+    cur.execute(
+        "SELECT exam, topic, score, total, test_date FROM scores WHERE user_id=? ORDER BY id DESC LIMIT 5",
+        (update.effective_user.id,)
+    )
     rows = cur.fetchall()
 
     if not rows:
-        await update.message.reply_text("📊 No test history yet", reply_markup=home_kb())
+        await send("❌ No score history.", reply_markup=home_kb())
         return
 
     msg = "📊 *Your Recent Tests*\n\n"
     for r in rows:
-        msg += f"{r[0]} / {r[1]} → *{r[2]}/{r[3]}* ({r[4]})\n"
+        msg += f"{r[0]} | {r[1]} → {r[2]}/{r[3]} ({r[4]})\n"
 
-    await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=home_kb())
+    await send(msg, parse_mode="Markdown", reply_markup=home_kb())
 # ================= PDF RESULT =================
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -404,5 +410,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
