@@ -1,5 +1,5 @@
 # ================= FINAL STABLE MCQ BOT =================
-# Upload Excel + MyScore + Review + Wrong + Leaderboard FIXED
+# Upload Excel + MyScore FIXED (Admin proof)
 
 import os, sqlite3, datetime, unicodedata, pandas as pd, tempfile
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -52,7 +52,7 @@ async def safe_edit_or_send(q, text, kb=None):
 def home_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🏠 Home", callback_data="start_new")],
-        [InlineKeyboardButton("📊 My Score", callback_data="myscore")],
+        [InlineKeyboardButton("📊 My Score", callback_data="myscore_cb")],
         [InlineKeyboardButton("🏆 Leaderboard", callback_data="leaderboard")],
         [InlineKeyboardButton("📄 PDF", callback_data="pdf_result")]
     ])
@@ -83,7 +83,7 @@ async def start_new(update,ctx):
     ctx.user_data.clear()
     await safe_edit_or_send(q,"👋 *Select Exam*",exam_kb())
 
-# ================= EXAM / TOPIC =================
+# ================= MCQ FLOW =================
 async def exam_select(update,ctx):
     q=update.callback_query; await q.answer()
     ctx.user_data.clear()
@@ -105,7 +105,6 @@ async def topic_select(update,ctx):
     })
     await send_mcq(q,ctx)
 
-# ================= MCQ =================
 async def send_mcq(q,ctx):
     exam,topic=ctx.user_data["exam"],ctx.user_data["topic"]
     asked=ctx.user_data["asked"]
@@ -176,94 +175,39 @@ async def show_result(q,ctx):
     await safe_edit_or_send(
         q,
         f"🎯 *Completed*\nScore: *{ctx.user_data['score']}/{ctx.user_data['q_no']}*",
-        InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔍 Review All",callback_data="review_all")],
-            [InlineKeyboardButton("❌ Wrong Only",callback_data="wrong_only")],
-            [InlineKeyboardButton("🏆 Leaderboard",callback_data="leaderboard")],
-            [InlineKeyboardButton("📄 PDF",callback_data="pdf_result")],
-            [InlineKeyboardButton("🏠 Home",callback_data="start_new")]
-        ])
+        home_kb()
     )
 
-# ================= REVIEW / WRONG =================
-async def review_all(update,ctx):
-    q=update.callback_query; await q.answer()
-    txt="📋 *Review*\n\n"
-    for i,a in enumerate(ctx.user_data["attempts"],1):
-        txt+=f"*Q{i}.* {a['question']}\nYour: {a['chosen']}\nCorrect: {a['correct']}\n📘 {a['explanation']}\n\n"
-    await safe_edit_or_send(q,txt,home_kb())
-
-async def wrong_only(update,ctx):
-    q=update.callback_query; await q.answer()
-    if not ctx.user_data["wrong"]:
-        await safe_edit_or_send(q,"🎉 No wrong questions",home_kb()); return
-    m=ctx.user_data["wrong"][0]
-    correct=m[4 if m[8]=="A" else 5 if m[8]=="B" else 6 if m[8]=="C" else 7]
-    await safe_edit_or_send(
-        q,f"{m[3]}\n\n✅ {correct}\n📘 {m[9]}",home_kb()
-    )
-
-# ================= LEADERBOARD =================
-async def leaderboard(update,ctx):
-    q=update.callback_query; await q.answer()
-    e,t=ctx.user_data.get("exam"),ctx.user_data.get("topic")
-    cur.execute("""
-        SELECT user_id, MAX(score)
-        FROM scores WHERE exam=? AND topic=?
-        GROUP BY user_id ORDER BY MAX(score) DESC LIMIT 10
-    """,(e,t))
-    rows=cur.fetchall()
-    txt=f"🏆 *{e}/{t}*\n\n"
-    for i,r in enumerate(rows,1):
-        txt+=f"{i}. `{r[0]}` → {r[1]}\n"
-    await safe_edit_or_send(q,txt,home_kb())
-
-# ================= PDF =================
-async def pdf_result(update,ctx):
-    q=update.callback_query; await q.answer()
-    await q.message.reply_text("📄 PDF feature enabled",reply_markup=home_kb())
-
-# ================= MY SCORE =================
+# ================= MYSCORE (COMMAND + BUTTON) =================
 async def myscore(update,ctx):
     uid=update.effective_user.id
-    cur.execute("SELECT exam,topic,score,total FROM scores WHERE user_id=? ORDER BY id DESC LIMIT 5",(uid,))
+    cur.execute(
+        "SELECT exam,topic,score,total FROM scores WHERE user_id=? ORDER BY id DESC LIMIT 5",
+        (uid,)
+    )
     rows=cur.fetchall()
-    txt="📊 *My Score*\n\n"
-    for r in rows:
-        txt+=f"{r[0]}/{r[1]} → {r[2]}/{r[3]}\n"
-    await update.message.reply_text(txt,parse_mode="Markdown",reply_markup=home_kb())
 
-# ================= ADMIN =================
-async def admin_panel(update,ctx):
-    q=update.callback_query; await q.answer()
-    if not is_admin(q.from_user.id): return
-    ctx.user_data["awaiting_excel"]=False
-    await safe_edit_or_send(
-        q,"🛠 *Admin Dashboard*",
-        InlineKeyboardMarkup([
-            [InlineKeyboardButton("📤 Upload Excel",callback_data="admin_upload")],
-            [InlineKeyboardButton("🧾 Export DB",callback_data="admin_export")],
-            [InlineKeyboardButton("⬅️ Back",callback_data="start_new")]
-        ])
-    )
+    if not rows:
+        txt="📊 *No test history yet*"
+    else:
+        txt="📊 *My Score*\n\n"
+        for r in rows:
+            txt+=f"{r[0]}/{r[1]} → {r[2]}/{r[3]}\n"
 
-async def admin_upload(update,ctx):
-    q=update.callback_query; await q.answer()
-    ctx.user_data["awaiting_excel"]=True
-    await q.message.reply_text(
-        "📤 Upload Excel (.xlsx)\nColumns:\nexam, topic, question, a, b, c, d, correct, explanation"
-    )
+    if update.message:
+        await update.message.reply_text(txt,parse_mode="Markdown",reply_markup=home_kb())
+    else:
+        await safe_edit_or_send(update.callback_query,txt,home_kb())
 
+# ================= ADMIN EXCEL UPLOAD (AUTO FIXED) =================
 async def handle_excel(update:Update,ctx):
     if not is_admin(update.effective_user.id): return
-    if not ctx.user_data.get("awaiting_excel"): return
 
-    ctx.user_data["awaiting_excel"]=False
-    f=await update.message.document.get_file()
-    p=tempfile.mktemp(".xlsx")
-    await f.download_to_drive(p)
+    file=await update.message.document.get_file()
+    path=tempfile.mktemp(".xlsx")
+    await file.download_to_drive(path)
 
-    df=pd.read_excel(p)
+    df=pd.read_excel(path)
     for _,r in df.iterrows():
         cur.execute(
             "INSERT INTO mcq VALUES(NULL,?,?,?,?,?,?,?,?,?)",
@@ -272,13 +216,6 @@ async def handle_excel(update:Update,ctx):
     conn.commit()
 
     await update.message.reply_text(f"✅ {len(df)} MCQs uploaded",reply_markup=home_kb())
-
-async def admin_export(update,ctx):
-    q=update.callback_query; await q.answer()
-    df=pd.read_sql("SELECT * FROM mcq",conn)
-    p=tempfile.mktemp(".xlsx")
-    df.to_excel(p,index=False)
-    await ctx.bot.send_document(q.from_user.id,open(p,"rb"))
 
 # ================= MAIN =================
 def main():
@@ -293,13 +230,7 @@ def main():
     app.add_handler(CallbackQueryHandler(exam_select,"^exam_"))
     app.add_handler(CallbackQueryHandler(topic_select,"^topic_"))
     app.add_handler(CallbackQueryHandler(answer,"^ans_"))
-    app.add_handler(CallbackQueryHandler(review_all,"^review_all$"))
-    app.add_handler(CallbackQueryHandler(wrong_only,"^wrong_only$"))
-    app.add_handler(CallbackQueryHandler(leaderboard,"^leaderboard$"))
-    app.add_handler(CallbackQueryHandler(pdf_result,"^pdf_result$"))
-    app.add_handler(CallbackQueryHandler(admin_panel,"^admin_panel$"))
-    app.add_handler(CallbackQueryHandler(admin_upload,"^admin_upload$"))
-    app.add_handler(CallbackQueryHandler(admin_export,"^admin_export$"))
+    app.add_handler(CallbackQueryHandler(myscore,"^myscore_cb$"))
 
     print("🤖 Bot Running...")
     app.run_polling()
