@@ -345,7 +345,7 @@ def main():
     app.add_handler(CallbackQueryHandler(review_all, "^review_all$"))
     app.add_handler(CallbackQueryHandler(wrong_only, "^wrong_only$"))
     app.add_handler(CallbackQueryHandler(leaderboard, "^leaderboard$"))
-    app.add_handler(CallbackQueryHandler(pdf_result, "^pdf_result$"))
+    #app.add_handler(CallbackQueryHandler(pdf_result, "^pdf_result$"))
     app.add_handler(CallbackQueryHandler(admin_panel, "^admin_panel$"))
     app.add_handler(CallbackQueryHandler(admin_upload, "^admin_upload$"))
     app.add_handler(CallbackQueryHandler(admin_export, "^admin_export$"))
@@ -355,3 +355,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
