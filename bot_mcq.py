@@ -184,6 +184,7 @@ async def show_result(q,ctx):
             [InlineKeyboardButton("🔍 Review All",callback_data="review_all")],
             [InlineKeyboardButton("❌ Wrong Only",callback_data="wrong_only")],
             [InlineKeyboardButton("🏆 Leaderboard",callback_data="leaderboard")],
+            [InlineKeyboardButton("📄 Download PDF", callback_data="pdf_result")],
             [InlineKeyboardButton("🏠 Home",callback_data="start_new")]
         ])
     )
@@ -370,7 +371,42 @@ async def admin_save_edit(update,ctx):
     conn.commit()
     ctx.user_data.clear()
     await update.message.reply_text("✅ Updated")
+async def admin_upload(update, ctx):
+    q = update.callback_query; await q.answer()
+    ctx.user_data["awaiting_excel"] = True
+    await q.message.reply_text(
+        "📤 Upload Excel (.xlsx)\n\n"
+        "Columns:\nexam, topic, question, a, b, c, d, correct, explanation"
+    )
 
+async def handle_excel(update: Update, ctx):
+    if not is_admin(update.effective_user.id): return
+    if not ctx.user_data.get("awaiting_excel"): return
+
+    ctx.user_data["awaiting_excel"] = False
+    file = await update.message.document.get_file()
+    path = tempfile.mktemp(".xlsx")
+    await file.download_to_drive(path)
+
+    df = pd.read_excel(path)
+    for _, r in df.iterrows():
+        cur.execute(
+            "INSERT INTO mcq VALUES(NULL,?,?,?,?,?,?,?,?,?)",
+            (r.exam,r.topic,r.question,r.a,r.b,r.c,r.d,r.correct,r.explanation)
+        )
+    conn.commit()
+
+    await update.message.reply_text(
+        f"✅ {len(df)} MCQs uploaded successfully",
+        reply_markup=home_kb()
+    )
+
+async def admin_export(update, ctx):
+    q = update.callback_query; await q.answer()
+    df = pd.read_sql("SELECT * FROM mcq", conn)
+    path = tempfile.mktemp(".xlsx")
+    df.to_excel(path, index=False)
+    await ctx.bot.send_document(q.from_user.id, open(path,"rb"))
 # ================= MAIN =================
 def main():
     app=ApplicationBuilder().token(TOKEN).build()
@@ -380,6 +416,7 @@ def main():
     app.add_handler(CallbackQueryHandler(myscore, "^myscore$"))
 
     app.add_handler(MessageHandler(filters.TEXT & filters.User(ADMIN_IDS),admin_text_router))
+    app.add_handler(MessageHandler(filters.Document.ALL & filters.User(ADMIN_IDS), handle_excel))
 
     app.add_handler(CallbackQueryHandler(start_new,"^start_new$"))
     app.add_handler(CallbackQueryHandler(exam_select,"^exam_"))
@@ -403,6 +440,7 @@ def main():
 
 if __name__=="__main__":
     main()
+
 
 
 
