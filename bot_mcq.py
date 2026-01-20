@@ -390,6 +390,9 @@ def main():
     app.add_handler(CallbackQueryHandler(leaderboard,"^leaderboard$"))
     app.add_handler(CallbackQueryHandler(pdf_result, "^pdf_result$"))
 
+    app.add_handler(CallbackQueryHandler(admin_upload, "^admin_upload$"))
+    app.add_handler(CallbackQueryHandler(admin_export, "^admin_export$"))
+
     app.add_handler(CallbackQueryHandler(admin_panel,"^admin_panel$"))
     app.add_handler(CallbackQueryHandler(admin_search,"^admin_search$"))
     app.add_handler(CallbackQueryHandler(admin_mcq_menu,"^admin_mcq_"))
@@ -400,5 +403,6 @@ def main():
 
 if __name__=="__main__":
     main()
+
 
 
