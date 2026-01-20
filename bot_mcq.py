@@ -305,6 +305,7 @@ def main():
 
     app.add_handler(CommandHandler("start",start))
     app.add_handler(CommandHandler("myscore",myscore))
+    app.add_handler(CallbackQueryHandler(myscore, "^myscore$"))
 
     app.add_handler(MessageHandler(filters.TEXT & filters.User(ADMIN_IDS),admin_text_router))
 
@@ -326,3 +327,4 @@ def main():
 
 if __name__=="__main__":
     main()
+
