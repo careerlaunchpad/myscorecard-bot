@@ -165,26 +165,41 @@ async def send_mcq(q,ctx):
         ])
     )
 
-async def answer(update,ctx):
-    q=update.callback_query; await q.answer()
-    m=ctx.user_data["current"]
-    sel=q.data[-1]
+async def answer(update, ctx):
+    q = update.callback_query
+    await q.answer()
 
-    chosen=m[4 if sel=="A" else 5 if sel=="B" else 6 if sel=="C" else 7]
-    correct=m[4 if m[8]=="A" else 5 if m[8]=="B" else 6 if m[8]=="C" else 7]
+    # 🔐 SAFETY CHECK (VERY IMPORTANT)
+    if "current" not in ctx.user_data:
+        await safe_edit_or_send(
+            q,
+            "⚠️ This question is no longer active.\nPlease start a new test.",
+            InlineKeyboardMarkup([
+                [InlineKeyboardButton("🏠 Home", callback_data="start_new")]
+            ])
+        )
+        return
+
+    m = ctx.user_data["current"]
+    sel = q.data[-1]
+
+    chosen = m[4 if sel=="A" else 5 if sel=="B" else 6 if sel=="C" else 7]
+    correct = m[4 if m[8]=="A" else 5 if m[8]=="B" else 6 if m[8]=="C" else 7]
 
     ctx.user_data["attempts"].append({
-        "question":m[3],
-        "chosen":chosen,
-        "correct":correct,
-        "explanation":m[9]
+        "question": m[3],
+        "chosen": chosen,
+        "correct": correct,
+        "explanation": m[9]
     })
 
-    if sel==m[8]: ctx.user_data["score"]+=1
-    else: ctx.user_data["wrong"].append(m)
+    if sel == m[8]:
+        ctx.user_data["score"] += 1
+    else:
+        ctx.user_data["wrong"].append(m)
 
-    ctx.user_data["q_no"]+=1
-    await send_mcq(q,ctx)
+    ctx.user_data["q_no"] += 1
+    await send_mcq(q, ctx)
 
 # ================= RESULT =================
 async def show_result(q,ctx):
@@ -706,6 +721,7 @@ def main():
 
 if __name__=="__main__":
     main()
+
 
 
 
