@@ -1,9 +1,8 @@
 # =========================================================
-# STEP 1 — CORE MCQ ENGINE (STABLE FOUNDATION)
-# Exam → Topic → MCQ → Result
+# STEP 2 — MCQ ENGINE + REVIEW / WRONG ANALYSIS (STABLE)
 # =========================================================
 
-import os, sqlite3, datetime
+import os, sqlite3
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, CallbackQueryHandler,
@@ -11,7 +10,6 @@ from telegram.ext import (
 )
 from telegram.error import BadRequest
 
-# ================= CONFIG =================
 TOKEN = os.getenv("BOT_TOKEN")
 
 # ================= DATABASE =================
@@ -21,15 +19,11 @@ cur = conn.cursor()
 cur.execute("""
 CREATE TABLE IF NOT EXISTS mcq (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
- exam TEXT,
- topic TEXT,
- question TEXT,
+ exam TEXT, topic TEXT, question TEXT,
  a TEXT, b TEXT, c TEXT, d TEXT,
- correct TEXT,
- explanation TEXT
+ correct TEXT, explanation TEXT
 )
 """)
-
 conn.commit()
 
 # ================= SAFE EDIT =================
@@ -43,10 +37,6 @@ async def safe_edit(q, text, kb=None):
 def exam_kb():
     cur.execute("SELECT DISTINCT exam FROM mcq")
     exams = [r[0] for r in cur.fetchall()]
-    if not exams:
-        return InlineKeyboardMarkup([
-            [InlineKeyboardButton("⚠️ No exams available", callback_data="noop")]
-        ])
     return InlineKeyboardMarkup(
         [[InlineKeyboardButton(e, callback_data=f"exam_{e}")] for e in exams]
     )
@@ -68,8 +58,7 @@ def answer_kb():
         [
             InlineKeyboardButton("C", callback_data="ans_C"),
             InlineKeyboardButton("D", callback_data="ans_D")
-        ],
-        [InlineKeyboardButton("🏠 Home", callback_data="start")]
+        ]
     ])
 
 # ================= START =================
@@ -83,51 +72,36 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 # ================= EXAM =================
 async def exam_select(update, ctx):
-    q = update.callback_query
-    await q.answer()
+    q = update.callback_query; await q.answer()
     ctx.user_data.clear()
-
-    exam = q.data.replace("exam_", "")
-    ctx.user_data["exam"] = exam
-
-    await safe_edit(q, "*Select Topic*", topic_kb(exam))
+    ctx.user_data["exam"] = q.data.replace("exam_", "")
+    await safe_edit(q, "*Select Topic*", topic_kb(ctx.user_data["exam"]))
 
 # ================= TOPIC =================
 async def topic_select(update, ctx):
-    q = update.callback_query
-    await q.answer()
+    q = update.callback_query; await q.answer()
 
-    exam = ctx.user_data.get("exam")
+    exam = ctx.user_data["exam"]
     topic = q.data.replace("topic_", "")
 
-    cur.execute(
-        "SELECT COUNT(*) FROM mcq WHERE exam=? AND topic=?",
-        (exam, topic)
-    )
+    cur.execute("SELECT COUNT(*) FROM mcq WHERE exam=? AND topic=?", (exam, topic))
     total = cur.fetchone()[0]
-
-    if total == 0:
-        await safe_edit(
-            q,
-            "⚠️ No questions found",
-            InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Home", callback_data="start")]])
-        )
-        return
 
     ctx.user_data.update({
         "topic": topic,
         "asked": [],
         "score": 0,
         "q_no": 0,
-        "total": total
+        "total": total,
+        "attempts": [],
+        "wrong": []
     })
 
     await send_mcq(q, ctx)
 
 # ================= SEND MCQ =================
 async def send_mcq(q, ctx):
-    exam = ctx.user_data["exam"]
-    topic = ctx.user_data["topic"]
+    exam, topic = ctx.user_data["exam"], ctx.user_data["topic"]
     asked = ctx.user_data["asked"]
 
     if asked:
@@ -157,48 +131,115 @@ async def send_mcq(q, ctx):
     text = (
         f"❓ *Q{ctx.user_data['q_no']+1}/{ctx.user_data['total']}*\n\n"
         f"{m[3]}\n\n"
-        f"A. {m[4]}\n"
-        f"B. {m[5]}\n"
-        f"C. {m[6]}\n"
-        f"D. {m[7]}"
+        f"A. {m[4]}\nB. {m[5]}\nC. {m[6]}\nD. {m[7]}"
     )
 
     await safe_edit(q, text, answer_kb())
 
 # ================= ANSWER =================
 async def answer(update, ctx):
-    q = update.callback_query
-    await q.answer()
+    q = update.callback_query; await q.answer()
 
     if "current" not in ctx.user_data:
-        await safe_edit(
-            q,
-            "⚠️ Session expired. Start again.",
-            InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Home", callback_data="start")]])
-        )
+        await safe_edit(q, "⚠️ Session expired", InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🏠 Home", callback_data="start")]]
+        ))
         return
 
     m = ctx.user_data["current"]
     sel = q.data[-1]
 
+    chosen = m[4 if sel=="A" else 5 if sel=="B" else 6 if sel=="C" else 7]
+    correct = m[4 if m[8]=="A" else 5 if m[8]=="B" else 6 if m[8]=="C" else 7]
+
+    ctx.user_data["attempts"].append({
+        "question": m[3],
+        "chosen": chosen,
+        "correct": correct,
+        "explanation": m[9]
+    })
+
     if sel == m[8]:
         ctx.user_data["score"] += 1
+    else:
+        ctx.user_data["wrong"].append(ctx.user_data["attempts"][-1])
 
     ctx.user_data["q_no"] += 1
     await send_mcq(q, ctx)
 
 # ================= RESULT =================
 async def show_result(q, ctx):
-    score = ctx.user_data["score"]
-    total = ctx.user_data["q_no"]
-
     await safe_edit(
         q,
-        f"🎯 *Test Completed*\n\nScore: *{score}/{total}*",
+        f"🎯 *Test Completed*\n\nScore: *{ctx.user_data['score']}/{ctx.user_data['q_no']}*",
         InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔍 Review All", callback_data="review_all")],
+            [InlineKeyboardButton("❌ Wrong Only", callback_data="wrong_only")],
             [InlineKeyboardButton("🏠 Home", callback_data="start")]
         ])
     )
+
+# ================= REVIEW ALL =================
+async def review_all(update, ctx):
+    q = update.callback_query; await q.answer()
+    text = "📋 *Review All Questions*\n\n"
+    for i,a in enumerate(ctx.user_data["attempts"],1):
+        text += (
+            f"*Q{i}.* {a['question']}\n"
+            f"Your: {a['chosen']}\n"
+            f"Correct: {a['correct']}\n"
+            f"📘 {a['explanation']}\n\n"
+        )
+    await safe_edit(q, text, InlineKeyboardMarkup(
+        [[InlineKeyboardButton("🏠 Home", callback_data="start")]]
+    ))
+
+# ================= WRONG ONLY =================
+async def wrong_only(update, ctx):
+    q = update.callback_query; await q.answer()
+    ctx.user_data["wrong_index"] = 0
+    await show_wrong(q, ctx)
+
+async def show_wrong(q, ctx):
+    idx = ctx.user_data["wrong_index"]
+    wrong = ctx.user_data["wrong"]
+
+    if not wrong:
+        await safe_edit(q, "🎉 No wrong questions", InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🏠 Home", callback_data="start")]]
+        ))
+        return
+
+    a = wrong[idx]
+    text = (
+        f"❌ *Wrong {idx+1}/{len(wrong)}*\n\n"
+        f"{a['question']}\n\n"
+        f"✅ Correct: {a['correct']}\n"
+        f"📘 {a['explanation']}"
+    )
+
+    nav = []
+    if idx > 0:
+        nav.append(InlineKeyboardButton("⬅️ Prev", callback_data="w_prev"))
+    if idx < len(wrong)-1:
+        nav.append(InlineKeyboardButton("➡️ Next", callback_data="w_next"))
+
+    kb = []
+    if nav:
+        kb.append(nav)
+    kb.append([InlineKeyboardButton("🏠 Home", callback_data="start")])
+
+    await safe_edit(q, text, InlineKeyboardMarkup(kb))
+
+async def w_next(update, ctx):
+    q = update.callback_query; await q.answer()
+    ctx.user_data["wrong_index"] += 1
+    await show_wrong(q, ctx)
+
+async def w_prev(update, ctx):
+    q = update.callback_query; await q.answer()
+    ctx.user_data["wrong_index"] -= 1
+    await show_wrong(q, ctx)
 
 # ================= MAIN =================
 def main():
@@ -210,7 +251,12 @@ def main():
     app.add_handler(CallbackQueryHandler(topic_select, "^topic_"))
     app.add_handler(CallbackQueryHandler(answer, "^ans_"))
 
-    print("🤖 STEP 1 CORE BOT RUNNING")
+    app.add_handler(CallbackQueryHandler(review_all, "^review_all$"))
+    app.add_handler(CallbackQueryHandler(wrong_only, "^wrong_only$"))
+    app.add_handler(CallbackQueryHandler(w_next, "^w_next$"))
+    app.add_handler(CallbackQueryHandler(w_prev, "^w_prev$"))
+
+    print("🤖 STEP 2 BOT RUNNING")
     app.run_polling()
 
 if __name__ == "__main__":
