@@ -340,6 +340,33 @@ async def pdf_result(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     doc.build(story)
     await ctx.bot.send_document(q.from_user.id,open(path,"rb"))
 
+# ================= ADMIN PANEL =================
+async def admin_panel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    if not is_admin(q.from_user.id):
+        await safe_edit_or_send(
+            q,
+            "⛔ You are not authorized to access admin panel",
+            InlineKeyboardMarkup([
+                [InlineKeyboardButton("🏠 Home", callback_data="start_new")]
+            ])
+        )
+        return
+
+    await safe_edit_or_send(
+        q,
+        "🛠 *Admin Dashboard*\n\nChoose an option 👇",
+        InlineKeyboardMarkup([
+            [InlineKeyboardButton("📤 Upload MCQs (Excel)", callback_data="admin_upload")],
+            [InlineKeyboardButton("🔍 Search / Edit MCQ", callback_data="admin_search")],
+            [InlineKeyboardButton("🧾 Export MCQ DB", callback_data="admin_export")],
+            [InlineKeyboardButton("⬅️ Back", callback_data="start_new")]
+        ])
+    )
+
+
 # ================= MAIN =================
 def main():
     
@@ -348,7 +375,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
 
 # ---- TOP LEVEL BUTTONS (FIRST) ----
-    #app.add_handler(CallbackQueryHandler(admin_panel, "^admin_panel$"))
+    app.add_handler(CallbackQueryHandler(admin_panel, "^admin_panel$"))
     app.add_handler(CallbackQueryHandler(donate, "^donate$"))
     app.add_handler(CallbackQueryHandler(profile, "^profile$"))
 
@@ -391,6 +418,7 @@ def main():
 
 if __name__=="__main__":
     main()
+
 
 
 
