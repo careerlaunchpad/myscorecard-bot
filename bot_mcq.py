@@ -333,8 +333,9 @@ async def admin_panel(update,ctx):
     await safe_edit_or_send(
         q,"🛠 *Admin Dashboard*",
         InlineKeyboardMarkup([
+            [InlineKeyboardButton("📊 User Analytics", callback_data="admin_stats")],
+            
             [InlineKeyboardButton("🔍 Search MCQ",callback_data="admin_search")],
-        
             [InlineKeyboardButton("📤 Upload Excel",callback_data="admin_upload")],
             [InlineKeyboardButton("🧾 Export DB",callback_data="admin_export")],
             [InlineKeyboardButton("⬅️ Back",callback_data="start_new")]
@@ -526,6 +527,59 @@ async def admin_export(update, ctx):
     path = tempfile.mktemp(".xlsx")
     df.to_excel(path, index=False)
     await ctx.bot.send_document(q.from_user.id, open(path,"rb"))
+
+#------------admin status---------------
+async def admin_stats(update, ctx):
+    q = update.callback_query
+    await q.answer()
+
+    # 1️⃣ Total unique users
+    cur.execute("SELECT COUNT(DISTINCT user_id) FROM scores")
+    total_users = cur.fetchone()[0] or 0
+
+    # 2️⃣ Active users today
+    today = datetime.date.today().isoformat()
+    cur.execute(
+        "SELECT COUNT(DISTINCT user_id) FROM scores WHERE test_date=?",
+        (today,)
+    )
+    active_today = cur.fetchone()[0] or 0
+
+    # 3️⃣ Total tests given
+    cur.execute("SELECT COUNT(*) FROM scores")
+    total_tests = cur.fetchone()[0] or 0
+
+    # 4️⃣ Most attempted exam/topic
+    cur.execute("""
+        SELECT exam, topic, COUNT(*) as cnt
+        FROM scores
+        GROUP BY exam, topic
+        ORDER BY cnt DESC
+        LIMIT 1
+    """)
+    row = cur.fetchone()
+
+    if row:
+        popular_test = f"{row[0]} / {row[1]} ({row[2]} attempts)"
+    else:
+        popular_test = "No data yet"
+
+    text = (
+        "📊 *User Analytics Dashboard*\n\n"
+        f"👥 *Total Users:* {total_users}\n"
+        f"🔥 *Active Today:* {active_today}\n"
+        f"📝 *Total Tests Given:* {total_tests}\n\n"
+        f"🏆 *Most Popular Test:*\n{popular_test}"
+    )
+
+    await safe_edit_or_send(
+        q,
+        text,
+        InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ Back", callback_data="admin_panel")]
+        ])
+    )
+
 #------Donate--------------
 async def donate(update, ctx):
     q = update.callback_query
@@ -575,7 +629,7 @@ def main():
     app.add_handler(CallbackQueryHandler(admin_export, "^admin_export$"))
 
   
-
+    app.add_handler(CallbackQueryHandler(admin_stats, "^admin_stats$"))
     app.add_handler(CallbackQueryHandler(admin_panel,"^admin_panel$"))
     app.add_handler(CallbackQueryHandler(admin_search,"^admin_search$"))
     app.add_handler(CallbackQueryHandler(admin_mcq_menu,"^admin_mcq_"))
@@ -591,6 +645,7 @@ def main():
 
 if __name__=="__main__":
     main()
+
 
 
 
