@@ -178,7 +178,7 @@ async def send_mcq(q,ctx):
         )
 
     m=cur.fetchone()
-    if not m:
+#    if not m:
     # Safety check – test properly started?
     if "q_no" not in ctx.user_data or ctx.user_data["q_no"] == 0:
         await safe_edit_or_send(
@@ -808,6 +808,7 @@ def main():
 
 if __name__=="__main__":
     main()
+
 
 
 
