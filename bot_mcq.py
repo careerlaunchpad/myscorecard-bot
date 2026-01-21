@@ -400,9 +400,8 @@ async def admin_edit_field(update,ctx):
     await q.message.reply_text("✏️ Send new value")
     
     if ctx.user_data["field"] == "correct": #update
-    await q.message.reply_text(
-        "Select correct option",
-        reply_markup=InlineKeyboardMarkup([
+        await q.message.reply_text("Select correct option",
+            reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("A", callback_data="set_correct_A"),
              InlineKeyboardButton("B", callback_data="set_correct_B")],
             [InlineKeyboardButton("C", callback_data="set_correct_C"),
@@ -549,6 +548,7 @@ def main():
 
 if __name__=="__main__":
     main()
+
 
 
 
