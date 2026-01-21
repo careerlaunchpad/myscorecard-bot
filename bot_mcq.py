@@ -400,12 +400,13 @@ def main():
     app.add_handler(CallbackQueryHandler(wrong_prev, "^wrong_prev$"))
 
     app.add_handler(CallbackQueryHandler(leaderboard, "^leaderboard$"))
-    app.add_handler(CallbackQueryHandler(pdf_result, "^pdf_result$"))
+    #app.add_handler(CallbackQueryHandler(pdf_result, "^pdf_result$"))
 
     print("🤖 Bot Running...")
     app.run_polling()
 
 if __name__ == "__main__":
     main()
+
 
 
