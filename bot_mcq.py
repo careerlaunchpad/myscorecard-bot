@@ -365,6 +365,57 @@ async def admin_panel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("⬅️ Back", callback_data="start_new")]
         ])
     )
+#------------admin upload file------------------------
+async def admin_upload(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    ctx.user_data["awaiting_excel"] = True
+
+    await safe_edit_or_send(
+        q,
+        "📤 *Upload Excel file*\n\nColumns:\nexam, topic, question, a, b, c, d, correct, explanation",
+        InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="admin_panel")]])
+    )
+#-------------excel handle-----------------------
+async def handle_excel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+    if not ctx.user_data.get("awaiting_excel"):
+        return
+
+    ctx.user_data["awaiting_excel"] = False
+    file = await update.message.document.get_file()
+    path = tempfile.mktemp(".xlsx")
+    await file.download_to_drive(path)
+
+    df = pd.read_excel(path)
+
+    for _, r in df.iterrows():
+        cur.execute(
+            "INSERT INTO mcq VALUES(NULL,?,?,?,?,?,?,?,?,?)",
+            (r.exam, r.topic, r.question, r.a, r.b, r.c, r.d, r.correct, r.explanation)
+        )
+
+    conn.commit()
+
+    await update.message.reply_text(
+        f"✅ {len(df)} MCQs uploaded successfully",
+        reply_markup=home_kb()
+    )
+#-----------admin export ------------------
+async def admin_export(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    df = pd.read_sql("SELECT * FROM mcq", conn)
+    path = tempfile.mktemp(".xlsx")
+    df.to_excel(path, index=False)
+
+    await ctx.bot.send_document(q.from_user.id, open(path, "rb"))
+
+#--------noop handler--------------
+async def noop(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer("No exams available yet")
 
 
 # ================= MAIN =================
@@ -373,6 +424,14 @@ def main():
     app=ApplicationBuilder().token(TOKEN).build()
     # ---- BASIC ----
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(noop, "^noop$"))
+
+    #-----------------main excel handle---------
+    app.add_handler(MessageHandler(filters.Document.ALL & filters.User(ADMIN_IDS), handle_excel))
+
+    #--------admin panel call back----------
+    app.add_handler(CallbackQueryHandler(admin_export, "^admin_export$"))
+    app.add_handler(CallbackQueryHandler(admin_upload, "^admin_upload$"))
 
 # ---- TOP LEVEL BUTTONS (FIRST) ----
     app.add_handler(CallbackQueryHandler(admin_panel, "^admin_panel$"))
@@ -418,6 +477,7 @@ def main():
 
 if __name__=="__main__":
     main()
+
 
 
 
