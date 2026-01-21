@@ -222,6 +222,7 @@ async def leaderboard(update,ctx):
     await safe_edit_or_send(q,txt,home_kb())
 # ================= MY SCORE =================
 async def myscore(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
     uid = update.effective_user.id
 
     cur.execute("""
@@ -518,6 +519,7 @@ def main():
 
 if __name__=="__main__":
     main()
+
 
 
 
