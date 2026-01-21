@@ -222,7 +222,7 @@ async def leaderboard(update,ctx):
     await safe_edit_or_send(q,txt,home_kb())
 # ================= MY SCORE =================
 async def myscore(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    msg = update.effective_message
+    msg = update.effective_message   # 🔥 FIX
     uid = update.effective_user.id
 
     cur.execute("""
@@ -235,7 +235,7 @@ async def myscore(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     rows = cur.fetchall()
 
     if not rows:
-        await update.message.reply_text(
+        await msg.reply_text(
             "📊 *No test history yet*",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([
@@ -244,17 +244,18 @@ async def myscore(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    msg = "📊 *Your Recent Tests*\n\n"
+    text = "📊 *Your Recent Tests*\n\n"
     for r in rows:
-        msg += f"{r[0]} / {r[1]} → *{r[2]}/{r[3]}* ({r[4]})\n"
+        text += f"{r[0]} / {r[1]} → *{r[2]}/{r[3]}* ({r[4]})\n"
 
-    await update.message.reply_text(
-        msg,
+    await msg.reply_text(
+        text,
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("⬅️ Back", callback_data="start_new")]
         ])
     )
+
 
 # ================= PDF RESULT =================
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
@@ -519,6 +520,7 @@ def main():
 
 if __name__=="__main__":
     main()
+
 
 
 
