@@ -14,6 +14,8 @@ from telegram.error import BadRequest
 # ================= CONFIG =================
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS = [1977205811]
+UPI_ID = "8085692143@ybl"   
+
 
 # ================= DATABASE =================
 conn = sqlite3.connect("mcq.db", check_same_thread=False)
@@ -59,13 +61,30 @@ def home_kb():
         [InlineKeyboardButton("📊 My Score", callback_data="myscore")],
         [InlineKeyboardButton("🏆 Leaderboard", callback_data="leaderboard")]
     ])
-
+#------------exam start point--------
 def exam_kb():
     cur.execute("SELECT DISTINCT exam FROM mcq")
-    exams=[r[0] for r in cur.fetchall()]
-    kb=[[InlineKeyboardButton(e,callback_data=f"exam_{e}")] for e in exams]
-    kb.append([InlineKeyboardButton("🛠 Admin",callback_data="admin_panel")])
+    exams = [r[0] for r in cur.fetchall()]
+
+    kb = []
+
+    # 💖 DONATE BUTTON (TOP)
+    kb.append([
+        InlineKeyboardButton(
+            "💖 Donate (UPI)",
+            callback_data="donate"
+        )
+    ])
+
+    # 📚 Exams
+    for e in exams:
+        kb.append([InlineKeyboardButton(e, callback_data=f"exam_{e}")])
+
+    # 🛠 Admin
+    kb.append([InlineKeyboardButton("🛠 Admin", callback_data="admin_panel")])
+
     return InlineKeyboardMarkup(kb)
+
 
 def topic_kb(exam):
     cur.execute("SELECT DISTINCT topic FROM mcq WHERE exam=?",(exam,))
@@ -507,11 +526,35 @@ async def admin_export(update, ctx):
     path = tempfile.mktemp(".xlsx")
     df.to_excel(path, index=False)
     await ctx.bot.send_document(q.from_user.id, open(path,"rb"))
+#------Donate--------------
+async def donate(update, ctx):
+    q = update.callback_query
+    await q.answer()
+
+    text = (
+        "🙏 *Support This Free MCQ Bot*\n\n"
+        "यह bot सभी के लिए *FREE* है ❤️\n"
+        "अगर आप support करना चाहें तो नीचे दी गई UPI ID पर donate कर सकते हैं 👇\n\n"
+        f"`{UPI_ID}`\n\n"
+        "📌 *UPI ID को long-press करके copy करें*"
+    )
+
+    await safe_edit_or_send(
+        q,
+        text,
+        InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ Back", callback_data="start_new")]
+        ])
+    )
+
+
 # ================= MAIN =================
 def main():
     app=ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start",start))
+    app.add_handler(CallbackQueryHandler(donate, "^donate$"))
+
     app.add_handler(CommandHandler("myscore",myscore))
     app.add_handler(CallbackQueryHandler(myscore, "^myscore$"))
 
@@ -548,6 +591,7 @@ def main():
 
 if __name__=="__main__":
     main()
+
 
 
 
