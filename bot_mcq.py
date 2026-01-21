@@ -212,7 +212,7 @@ async def answer(update, ctx):
     await send_mcq(q, ctx)
 
 # ================= RESULT =================
-async def show_result(q, ctx):
+"""async def show_result(q, ctx):
     u = q.from_user
     cur.execute(
         "INSERT INTO scores VALUES(NULL,?,?,?,?,?)",
@@ -236,13 +236,79 @@ async def show_result(q, ctx):
             [InlineKeyboardButton("🏠 Home", callback_data="start_new")]
         ])
     )
+    """
+async def show_result(q, ctx):
+    # 🔐 SAFETY
+    exam = ctx.user_data.get("exam")
+    topic = ctx.user_data.get("topic")
+    score = ctx.user_data.get("score", 0)
+    total = ctx.user_data.get("q_no", 0)
+
+    if not exam or not topic or total == 0:
+        await safe_edit_or_send(
+            q,
+            "⚠️ Test data incomplete. Please start again.",
+            InlineKeyboardMarkup([
+                [InlineKeyboardButton("🏠 Home", callback_data="start_new")]
+            ])
+        )
+        return
+
+    # ⭐ SAVE LAST SCREEN
+    ctx.user_data["last_screen"] = "result"
+
+    cur.execute(
+        "INSERT INTO scores VALUES(NULL,?,?,?,?,?,?)",
+        (
+            q.from_user.id,
+            exam,
+            topic,
+            score,
+            total,
+            datetime.date.today().isoformat()
+        )
+    )
+    conn.commit()
+
+    await safe_edit_or_send(
+        q,
+        f"🎯 *Test Completed*\n\nScore: *{score}/{total}*",
+        InlineKeyboardMarkup([
+            [InlineKeyboardButton("💖 Donate", callback_data="donate")],
+            [InlineKeyboardButton("🔍 Review All", callback_data="review_all")],
+            [InlineKeyboardButton("❌ Wrong Only", callback_data="wrong_only")],
+            [InlineKeyboardButton("🏆 Leaderboard", callback_data="leaderboard")],
+            [InlineKeyboardButton("📄 PDF", callback_data="pdf_result")],
+            [InlineKeyboardButton("🏠 Home", callback_data="start_new")]
+        ])
+    )
+#------back to result--------------------
+async def back_to_result(update, ctx):
+    q = update.callback_query
+    await q.answer()
+
+    if ctx.user_data.get("last_screen") == "result":
+        await show_result(q, ctx)
+    else:
+        await safe_edit_or_send(
+            q,
+            "⚠️ Session expired.",
+            InlineKeyboardMarkup([
+                [InlineKeyboardButton("🏠 Home", callback_data="start_new")]
+            ])
+        )
+
 
 # ================= REVIEW =================
 async def review_all(update, ctx):
-    q = update.callback_query; await q.answer()
-    txt = "📋 *Review*\n\n"
-    for i,a in enumerate(ctx.user_data.get("attempts",[]),1):
-        txt += (
+    q = update.callback_query
+    await q.answer()
+
+    ctx.user_data["last_screen"] = "result"
+
+    text = "📋 *Review All Questions*\n\n"
+    for i, a in enumerate(ctx.user_data.get("attempts", []), 1):
+        text += (
             f"*Q{i}.* {a['question']}\n"
             f"Your: {a['chosen']}\n"
             f"Correct: {a['correct']}\n"
@@ -250,7 +316,8 @@ async def review_all(update, ctx):
         )
 
     await safe_edit_or_send(
-        q, txt,
+        q,
+        text,
         InlineKeyboardMarkup([
             [InlineKeyboardButton("⬅️ Back", callback_data="back_result")],
             [InlineKeyboardButton("🏠 Home", callback_data="start_new")]
@@ -259,13 +326,25 @@ async def review_all(update, ctx):
 
 # ================= WRONG =================
 async def wrong_only(update, ctx):
-    q = update.callback_query; await q.answer()
-    if not ctx.user_data.get("wrong"):
-        await safe_edit_or_send(q, "🎉 No wrong questions", home_kb())
-        return
-    ctx.user_data["wrong_i"] = 0
-    await show_wrong(q, ctx)
+    q = update.callback_query
+    await q.answer()
 
+    if not ctx.user_data.get("wrong"):
+        await safe_edit_or_send(
+            q,
+            "🎉 No wrong questions",
+            InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Back", callback_data="back_result")],
+                [InlineKeyboardButton("🏠 Home", callback_data="start_new")]
+            ])
+        )
+        return
+
+    ctx.user_data["wrong_index"] = 0
+    ctx.user_data["last_screen"] = "result"
+    await show_wrong_question(q, ctx)
+
+#--------- show wrong------------------
 async def show_wrong(q, ctx):
     i = ctx.user_data["wrong_i"]
     m = ctx.user_data["wrong"][i]
@@ -285,12 +364,47 @@ async def show_wrong(q, ctx):
         f"❌ *Wrong {i+1}*\n\n{m[3]}\n\n✅ {correct}\n📘 {m[9]}",
         InlineKeyboardMarkup(kb)
     )
+#---- show wrong question------------
+async def show_wrong_question(q, ctx):
+    idx = ctx.user_data["wrong_index"]
+    wrong_list = ctx.user_data["wrong"]
 
+    m = wrong_list[idx]
+    correct = m[4 if m[8]=="A" else 5 if m[8]=="B" else 6 if m[8]=="C" else 7]
+
+    text = (
+        f"❌ *Wrong Question {idx+1}/{len(wrong_list)}*\n\n"
+        f"{m[3]}\n\n"
+        f"✅ *Correct:* {correct}\n"
+        f"📘 {m[9]}"
+    )
+
+    nav = []
+    if idx > 0:
+        nav.append(InlineKeyboardButton("⬅️ Prev", callback_data="wrong_prev"))
+    if idx < len(wrong_list) - 1:
+        nav.append(InlineKeyboardButton("➡️ Next", callback_data="wrong_next"))
+
+    kb = []
+    if nav:
+        kb.append(nav)
+
+    kb.append([
+        InlineKeyboardButton("⬅️ Back", callback_data="back_result")
+    ])
+    kb.append([
+        InlineKeyboardButton("🏠 Home", callback_data="start_new")
+    ])
+
+    await safe_edit_or_send(q, text, InlineKeyboardMarkup(kb))
+
+#-------wrong next-------------
 async def wrong_next(update, ctx):
     q = update.callback_query; await q.answer()
     ctx.user_data["wrong_i"] += 1
     await show_wrong(q, ctx)
 
+#------wrong previous---------------
 async def wrong_prev(update, ctx):
     q = update.callback_query; await q.answer()
     ctx.user_data["wrong_i"] -= 1
@@ -314,7 +428,8 @@ async def leaderboard(update, ctx):
             q,
             "⚠️ Leaderboard देखने के लिए पहले कोई test complete करें",
             InlineKeyboardMarkup([
-                [InlineKeyboardButton("⬅️ Back", callback_data="start_new")]
+                [InlineKeyboardButton("⬅️ Back", callback_data="start_new")],
+                [InlineKeyboardButton("🏠 Home", callback_data="start_new")]
             ])
         )
         return
@@ -448,6 +563,8 @@ def main():
     app.add_handler(CallbackQueryHandler(profile, "^profile$"))
     app.add_handler(CallbackQueryHandler(start_new, "^start_new$"))
     app.add_handler(CallbackQueryHandler(back_result, "^back_result$"))
+    app.add_handler(CallbackQueryHandler(back_to_result, "^back_result$"))
+
 
     app.add_handler(CallbackQueryHandler(exam_select, "^exam_"))
     app.add_handler(CallbackQueryHandler(topic_select, "^topic_"))
@@ -466,6 +583,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
