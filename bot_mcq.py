@@ -302,6 +302,7 @@ async def admin_panel(update,ctx):
         q,"🛠 *Admin Dashboard*",
         InlineKeyboardMarkup([
             [InlineKeyboardButton("🔍 Search MCQ",callback_data="admin_search")],
+            [InlineKeyboardButton("📤 Edit MCQ",callback_data="admin_mcq_menu")],
             [InlineKeyboardButton("📤 Upload Excel",callback_data="admin_upload")],
             [InlineKeyboardButton("🧾 Export DB",callback_data="admin_export")],
             [InlineKeyboardButton("⬅️ Back",callback_data="start_new")]
@@ -440,6 +441,7 @@ def main():
 
 if __name__=="__main__":
     main()
+
 
 
 
