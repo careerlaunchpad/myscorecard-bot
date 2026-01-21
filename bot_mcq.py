@@ -378,6 +378,65 @@ async def donate(update, ctx):
         f"🙏 *Support This Free Bot*\n\n`{UPI_ID}`",
         InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="start_new")]])
     )
+# ================= PDF RESULT =================
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.lib.pagesizes import A4
+
+pdfmetrics.registerFont(TTFont("Hindi", "NotoSansDevanagari-Regular.ttf"))
+
+async def pdf_result(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    if "attempts" not in ctx.user_data or not ctx.user_data["attempts"]:
+        await safe_edit_or_send(
+            q,
+            "⚠️ PDF बनाने के लिए कोई test data नहीं है",
+            InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Back", callback_data="review_all")],
+                [InlineKeyboardButton("🏠 Home", callback_data="start_new")]
+            ])
+        )
+        return
+
+    file_path = f"MyScore_{q.from_user.id}.pdf"
+    doc = SimpleDocTemplate(file_path, pagesize=A4)
+
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(name="H", fontName="Hindi", fontSize=11))
+
+    story = [
+        Paragraph("MyScoreCard – Test Result", styles["H"]),
+        Spacer(1, 12)
+    ]
+
+    for i, a in enumerate(ctx.user_data["attempts"], 1):
+        story.extend([
+            Paragraph(f"Q{i}: {safe_hindi(a['question'])}", styles["H"]),
+            Paragraph(f"Your Answer: {safe_hindi(a['chosen'])}", styles["H"]),
+            Paragraph(f"Correct Answer: {safe_hindi(a['correct'])}", styles["H"]),
+            Paragraph(f"Explanation: {safe_hindi(a['explanation'])}", styles["H"]),
+            Spacer(1, 10)
+        ])
+
+    doc.build(story)
+
+    await ctx.bot.send_document(
+        chat_id=q.from_user.id,
+        document=open(file_path, "rb")
+    )
+
+    await ctx.bot.send_message(
+        chat_id=q.from_user.id,
+        text="📄 PDF Generated Successfully",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ Back", callback_data="review_all")],
+            [InlineKeyboardButton("🏠 Home", callback_data="start_new")]
+        ])
+    )
 
 # ================= MAIN =================
 def main():
@@ -400,13 +459,14 @@ def main():
     app.add_handler(CallbackQueryHandler(wrong_prev, "^wrong_prev$"))
 
     app.add_handler(CallbackQueryHandler(leaderboard, "^leaderboard$"))
-    #app.add_handler(CallbackQueryHandler(pdf_result, "^pdf_result$"))
+    app.add_handler(CallbackQueryHandler(pdf_result, "^pdf_result$"))
 
     print("🤖 Bot Running...")
     app.run_polling()
 
 if __name__ == "__main__":
     main()
+
 
 
 
