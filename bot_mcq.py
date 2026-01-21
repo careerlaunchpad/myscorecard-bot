@@ -398,6 +398,19 @@ async def admin_edit_field(update,ctx):
     ctx.user_data["admin_mode"]="edit_field"
     ctx.user_data["field"]=q.data.replace("edit_","")
     await q.message.reply_text("✏️ Send new value")
+    
+    if ctx.user_data["field"] == "correct": #update
+    await q.message.reply_text(
+        "Select correct option",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("A", callback_data="set_correct_A"),
+             InlineKeyboardButton("B", callback_data="set_correct_B")],
+            [InlineKeyboardButton("C", callback_data="set_correct_C"),
+             InlineKeyboardButton("D", callback_data="set_correct_D")]
+        ])
+    )
+    return
+
 
 async def admin_save_edit(update,ctx):
     if ctx.user_data.get("admin_mode")!="edit_field": return
@@ -447,6 +460,18 @@ async def admin_undo(update, ctx):
 
     await q.message.reply_text("♻️ Undo successful")
 
+#---------admin set correct-------------------------
+async def admin_set_correct(update, ctx):
+    q = update.callback_query
+    await q.answer()
+    mcq_id = ctx.user_data["edit_id"]
+    correct = q.data[-1]
+    cur.execute("UPDATE mcq SET correct=? WHERE id=?", (correct, mcq_id))
+    conn.commit()
+    ctx.user_data.clear()
+    await q.message.reply_text("✅ Correct option updated")
+
+#------------admin upload------------------------
 async def admin_upload(update, ctx):
     q = update.callback_query; await q.answer()
     ctx.user_data["awaiting_excel"] = True
@@ -493,6 +518,7 @@ def main():
 
     app.add_handler(MessageHandler(filters.TEXT & filters.User(ADMIN_IDS),admin_text_router))
     app.add_handler(MessageHandler(filters.Document.ALL & filters.User(ADMIN_IDS), handle_excel))
+    app.add_handler(MessageHandler(filters.TEXT & filters.User(ADMIN_IDS),admin_save_edit))
 
     app.add_handler(CallbackQueryHandler(start_new,"^start_new$"))
     app.add_handler(CallbackQueryHandler(exam_select,"^exam_"))
@@ -511,15 +537,19 @@ def main():
     app.add_handler(CallbackQueryHandler(admin_panel,"^admin_panel$"))
     app.add_handler(CallbackQueryHandler(admin_search,"^admin_search$"))
     app.add_handler(CallbackQueryHandler(admin_mcq_menu,"^admin_mcq_"))
-    app.add_handler(CallbackQueryHandler(admin_mcq_menu, "^admin_mcq_"))
-
+    
+    app.add_handler(CallbackQueryHandler(admin_delete_mcq, "^delete_mcq$"))
+    app.add_handler(CallbackQueryHandler(admin_undo, "^undo_delete$"))
     app.add_handler(CallbackQueryHandler(admin_edit_field,"^edit_"))
+    app.add_handler(CallbackQueryHandler(admin_set_correct, "^set_correct_"))
+
 
     print("🤖 Bot Running...")
     app.run_polling()
 
 if __name__=="__main__":
     main()
+
 
 
 
