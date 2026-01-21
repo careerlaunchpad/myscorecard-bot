@@ -348,7 +348,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
 
 # ---- TOP LEVEL BUTTONS (FIRST) ----
-    app.add_handler(CallbackQueryHandler(admin_panel, "^admin_panel$"))
+    #app.add_handler(CallbackQueryHandler(admin_panel, "^admin_panel$"))
     app.add_handler(CallbackQueryHandler(donate, "^donate$"))
     app.add_handler(CallbackQueryHandler(profile, "^profile$"))
 
@@ -391,5 +391,6 @@ def main():
 
 if __name__=="__main__":
     main()
+
 
 
