@@ -343,6 +343,7 @@ async def pdf_result(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # ================= MAIN =================
 def main():
     
+    app=ApplicationBuilder().token(TOKEN).build()
     # ---- BASIC ----
     app.add_handler(CommandHandler("start", start))
 
@@ -390,4 +391,5 @@ def main():
 
 if __name__=="__main__":
     main()
+
 
