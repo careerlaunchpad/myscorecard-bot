@@ -272,7 +272,7 @@ cur.execute(
     """
     INSERT INTO scores
     (user_id, exam, topic, score, total, test_date, username)
-    VALUES (?,?,?,?,?,?,?)
+    #VALUES (?,?,?,?,?,?,?)
     """,
     (
         user.id,
@@ -817,6 +817,7 @@ def main():
 
 if __name__=="__main__":
     main()
+
 
 
 
