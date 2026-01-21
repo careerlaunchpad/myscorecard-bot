@@ -269,23 +269,47 @@ async def back_result(update, ctx):
 
 # ================= LEADERBOARD =================
 async def leaderboard(update, ctx):
-    q=update.callback_query; await q.answer()
-    exam,topic=ctx.user_data.get("exam"),ctx.user_data.get("topic")
+    q = update.callback_query
+    await q.answer()
+
+    exam = ctx.user_data.get("exam")
+    topic = ctx.user_data.get("topic")
+
     if not exam or not topic:
-        await safe_edit_or_send(q,"⚠️ Complete a test first",home_kb()); return
+        await safe_edit_or_send(
+            q,
+            "⚠️ Leaderboard देखने के लिए पहले कोई test complete करें",
+            InlineKeyboardMarkup([
+                [InlineKeyboardButton("🏠 Home", callback_data="start_new")]
+            ])
+        )
+        return
+
     cur.execute("""
         SELECT u.username, MAX(s.score)
-        FROM scores s JOIN users u ON u.user_id=s.user_id
+        FROM scores s
+        JOIN users u ON u.user_id = s.user_id
         WHERE s.exam=? AND s.topic=?
         GROUP BY s.user_id
         ORDER BY MAX(s.score) DESC
         LIMIT 10
-    """,(exam,topic))
-    rows=cur.fetchall()
-    text=f"🏆 *Leaderboard — {exam}/{topic}*\n\n"
-    for i,r in enumerate(rows,1):
-        text+=f"{i}. *{r[0] or 'User'}* → {r[1]}\n"
-    await safe_edit_or_send(q,text,home_kb())
+    """, (exam, topic))
+
+    rows = cur.fetchall()
+
+    text = f"🏆 *Leaderboard — {exam} / {topic}*\n\n"
+    for i, r in enumerate(rows, 1):
+        name = r[0] or "User"
+        text += f"{i}. *{name}* → {r[1]}\n"
+
+    await safe_edit_or_send(
+        q,
+        text,
+        InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ Back", callback_data="back_result")],
+            [InlineKeyboardButton("🏠 Home", callback_data="start_new")]
+        ])
+    )
 
 # ================= PROFILE =================
 async def profile(update, ctx):
@@ -413,6 +437,98 @@ async def admin_export(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     await ctx.bot.send_document(q.from_user.id, open(path, "rb"))
 
+#------------Admin Search / Edit MCQ------------
+async def admin_search(update, ctx):
+    q = update.callback_query
+    await q.answer()
+
+    ctx.user_data.clear()
+    ctx.user_data["admin_mode"] = "search"
+
+    await safe_edit_or_send(
+        q,
+        "🔍 *Send keyword to search MCQ*",
+        InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ Back", callback_data="admin_panel")]
+        ])
+    )
+#---------------------Admin text router (SEARCH + EDIT SAVE)------------
+async def admin_text_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+
+    # SEARCH MODE
+    if ctx.user_data.get("admin_mode") == "search":
+        kw = update.message.text.strip()
+
+        cur.execute(
+            "SELECT id, question FROM mcq WHERE question LIKE ? LIMIT 20",
+            (f"%{kw}%",)
+        )
+        rows = cur.fetchall()
+
+        if not rows:
+            await update.message.reply_text("❌ No MCQ found")
+            return
+
+        kb = [
+            [InlineKeyboardButton(r[1][:40] + "…", callback_data=f"admin_mcq_{r[0]}")]
+            for r in rows
+        ]
+        kb.append([InlineKeyboardButton("⬅️ Back", callback_data="admin_panel")])
+
+        await update.message.reply_text(
+            "📋 Select MCQ to Edit",
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
+
+    # EDIT MODE
+    elif ctx.user_data.get("admin_mode") == "edit_field":
+        field = ctx.user_data["field"]
+        mcq_id = ctx.user_data["edit_id"]
+
+        cur.execute(
+            f"UPDATE mcq SET {field}=? WHERE id=?",
+            (update.message.text, mcq_id)
+        )
+        conn.commit()
+
+        ctx.user_data.clear()
+        await update.message.reply_text("✅ MCQ Updated Successfully")
+#------MCQ Edit Menu-------------
+async def admin_mcq_menu(update, ctx):
+    q = update.callback_query
+    await q.answer()
+
+    mcq_id = int(q.data.split("_")[-1])
+    ctx.user_data["edit_id"] = mcq_id
+
+    cur.execute("SELECT * FROM mcq WHERE id=?", (mcq_id,))
+    m = cur.fetchone()
+
+    await safe_edit_or_send(
+        q,
+        f"*Edit MCQ*\n\n{m[3]}",
+        InlineKeyboardMarkup([
+            [InlineKeyboardButton("✏ Question", callback_data="edit_question")],
+            [InlineKeyboardButton("🅰 A", callback_data="edit_a"),
+             InlineKeyboardButton("🅱 B", callback_data="edit_b")],
+            [InlineKeyboardButton("🅲 C", callback_data="edit_c"),
+             InlineKeyboardButton("🅳 D", callback_data="edit_d")],
+            [InlineKeyboardButton("✔ Correct", callback_data="edit_correct")],
+            [InlineKeyboardButton("⬅️ Back", callback_data="admin_panel")]
+        ])
+    )
+#------Edit field selector----------
+async def admin_edit_field(update, ctx):
+    q = update.callback_query
+    await q.answer()
+
+    ctx.user_data["admin_mode"] = "edit_field"
+    ctx.user_data["field"] = q.data.replace("edit_", "")
+
+    await q.message.reply_text("✏️ Send new value")
+
 #--------noop handler--------------
 async def noop(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer("No exams available yet")
@@ -432,6 +548,12 @@ def main():
     #--------admin panel call back----------
     app.add_handler(CallbackQueryHandler(admin_export, "^admin_export$"))
     app.add_handler(CallbackQueryHandler(admin_upload, "^admin_upload$"))
+    app.add_handler(CallbackQueryHandler(admin_search, "^admin_search$"))
+    app.add_handler(CallbackQueryHandler(admin_mcq_menu, "^admin_mcq_"))
+    app.add_handler(CallbackQueryHandler(admin_edit_field, "^edit_"))
+
+    app.add_handler(MessageHandler(filters.TEXT & filters.User(ADMIN_IDS), admin_text_router))
+
 
 # ---- TOP LEVEL BUTTONS (FIRST) ----
     app.add_handler(CallbackQueryHandler(admin_panel, "^admin_panel$"))
@@ -477,6 +599,7 @@ def main():
 
 if __name__=="__main__":
     main()
+
 
 
 
