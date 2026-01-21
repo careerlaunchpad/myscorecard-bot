@@ -1,68 +1,107 @@
 # =========================================================
-# STEP 2 — MCQ ENGINE + REVIEW / WRONG ANALYSIS (STABLE)
+# FINAL STABLE MCQ BOT — STEP 5 COMPLETE
+# User Profile + History + Review + Wrong Nav + Admin
 # =========================================================
 
-import os, sqlite3
+import os, sqlite3, datetime, tempfile, unicodedata, pandas as pd
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, CallbackQueryHandler,
-    ContextTypes
+    MessageHandler, ContextTypes, filters
 )
 from telegram.error import BadRequest
 
+# ================= CONFIG =================
 TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_IDS = [1977205811]
+UPI_ID = "8085692143@ybl"
 
 # ================= DATABASE =================
 conn = sqlite3.connect("mcq.db", check_same_thread=False)
 cur = conn.cursor()
 
 cur.execute("""
-CREATE TABLE IF NOT EXISTS mcq (
+CREATE TABLE IF NOT EXISTS users(
+ user_id INTEGER PRIMARY KEY,
+ username TEXT,
+ first_name TEXT,
+ last_name TEXT,
+ mobile TEXT,
+ created_at TEXT
+)
+""")
+
+cur.execute("""
+CREATE TABLE IF NOT EXISTS mcq(
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  exam TEXT, topic TEXT, question TEXT,
  a TEXT, b TEXT, c TEXT, d TEXT,
  correct TEXT, explanation TEXT
 )
 """)
+
+cur.execute("""
+CREATE TABLE IF NOT EXISTS scores(
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ user_id INTEGER,
+ exam TEXT, topic TEXT,
+ score INTEGER, total INTEGER,
+ test_date TEXT
+)
+""")
 conn.commit()
 
-# ================= SAFE EDIT =================
-async def safe_edit(q, text, kb=None):
+# ================= HELPERS =================
+def is_admin(uid): return uid in ADMIN_IDS
+def safe_hindi(t): return unicodedata.normalize("NFKC", str(t)) if t else ""
+
+async def safe_edit_or_send(q, text, kb=None):
     try:
         await q.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
     except BadRequest:
         await q.message.reply_text(text, reply_markup=kb, parse_mode="Markdown")
 
-# ================= KEYBOARDS =================
+def display_name(user):
+    if user.username:
+        return f"@{user.username}"
+    name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+    return name if name else f"User_{user.id}"
+
+# ================= UI =================
+def home_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🏠 Home", callback_data="start_new")]
+    ])
+
 def exam_kb():
     cur.execute("SELECT DISTINCT exam FROM mcq")
     exams = [r[0] for r in cur.fetchall()]
-    return InlineKeyboardMarkup(
-        [[InlineKeyboardButton(e, callback_data=f"exam_{e}")] for e in exams]
-    )
+
+    kb = [
+        [InlineKeyboardButton("💖 Donate", callback_data="donate")],
+        [InlineKeyboardButton("👤 My Profile", callback_data="profile")]
+    ]
+
+    for e in exams:
+        kb.append([InlineKeyboardButton(e, callback_data=f"exam_{e}")])
+
+    kb.append([InlineKeyboardButton("🛠 Admin", callback_data="admin_panel")])
+    return InlineKeyboardMarkup(kb)
 
 def topic_kb(exam):
     cur.execute("SELECT DISTINCT topic FROM mcq WHERE exam=?", (exam,))
-    topics = [r[0] for r in cur.fetchall()]
-    return InlineKeyboardMarkup(
-        [[InlineKeyboardButton(t, callback_data=f"topic_{t}")] for t in topics] +
-        [[InlineKeyboardButton("🏠 Home", callback_data="start")]]
-    )
-
-def answer_kb():
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("A", callback_data="ans_A"),
-            InlineKeyboardButton("B", callback_data="ans_B")
-        ],
-        [
-            InlineKeyboardButton("C", callback_data="ans_C"),
-            InlineKeyboardButton("D", callback_data="ans_D")
-        ]
-    ])
+    kb = [[InlineKeyboardButton(t[0], callback_data=f"topic_{t[0]}")] for t in cur.fetchall()]
+    kb.append([InlineKeyboardButton("⬅️ Back", callback_data="start_new")])
+    return InlineKeyboardMarkup(kb)
 
 # ================= START =================
-async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def start(update: Update, ctx):
+    u = update.effective_user
+    cur.execute(
+        "INSERT OR IGNORE INTO users VALUES(?,?,?,?,?,?)",
+        (u.id, u.username, u.first_name, u.last_name, None, datetime.date.today().isoformat())
+    )
+    conn.commit()
     ctx.user_data.clear()
     await update.message.reply_text(
         "👋 *Select Exam*",
@@ -70,36 +109,42 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         reply_markup=exam_kb()
     )
 
-# ================= EXAM =================
+async def start_new(update, ctx):
+    q = update.callback_query; await q.answer()
+    ctx.user_data.clear()
+    await safe_edit_or_send(q, "👋 *Select Exam*", exam_kb())
+
+# ================= EXAM FLOW =================
 async def exam_select(update, ctx):
     q = update.callback_query; await q.answer()
     ctx.user_data.clear()
     ctx.user_data["exam"] = q.data.replace("exam_", "")
-    await safe_edit(q, "*Select Topic*", topic_kb(ctx.user_data["exam"]))
+    await safe_edit_or_send(q, "📚 Choose Topic", topic_kb(ctx.user_data["exam"]))
 
-# ================= TOPIC =================
 async def topic_select(update, ctx):
     q = update.callback_query; await q.answer()
-
     exam = ctx.user_data["exam"]
     topic = q.data.replace("topic_", "")
 
     cur.execute("SELECT COUNT(*) FROM mcq WHERE exam=? AND topic=?", (exam, topic))
     total = cur.fetchone()[0]
 
+    if total == 0:
+        await safe_edit_or_send(q, "⚠️ No questions found", home_kb())
+        return
+
     ctx.user_data.update({
+        "exam": exam,
         "topic": topic,
-        "asked": [],
         "score": 0,
         "q_no": 0,
-        "total": total,
-        "attempts": [],
-        "wrong": []
+        "asked": [],
+        "wrong": [],
+        "attempts": []
     })
-
     await send_mcq(q, ctx)
 
-# ================= SEND MCQ =================
+# ================= MCQ =================
 async def send_mcq(q, ctx):
     exam, topic = ctx.user_data["exam"], ctx.user_data["topic"]
     asked = ctx.user_data["asked"]
@@ -107,11 +152,7 @@ async def send_mcq(q, ctx):
     if asked:
         ph = ",".join("?" * len(asked))
         cur.execute(
-            f"""
-            SELECT * FROM mcq
-            WHERE exam=? AND topic=? AND id NOT IN ({ph})
-            ORDER BY RANDOM() LIMIT 1
-            """,
+            f"SELECT * FROM mcq WHERE exam=? AND topic=? AND id NOT IN ({ph}) ORDER BY RANDOM() LIMIT 1",
             [exam, topic] + asked
         )
     else:
@@ -128,22 +169,24 @@ async def send_mcq(q, ctx):
     ctx.user_data["current"] = m
     ctx.user_data["asked"].append(m[0])
 
-    text = (
-        f"❓ *Q{ctx.user_data['q_no']+1}/{ctx.user_data['total']}*\n\n"
-        f"{m[3]}\n\n"
-        f"A. {m[4]}\nB. {m[5]}\nC. {m[6]}\nD. {m[7]}"
+    await safe_edit_or_send(
+        q,
+        f"❓ *Q{ctx.user_data['q_no']+1}*\n\n{m[3]}\n\n"
+        f"A. {m[4]}\nB. {m[5]}\nC. {m[6]}\nD. {m[7]}",
+        InlineKeyboardMarkup([
+            [InlineKeyboardButton("A", callback_data="ans_A"),
+             InlineKeyboardButton("B", callback_data="ans_B")],
+            [InlineKeyboardButton("C", callback_data="ans_C"),
+             InlineKeyboardButton("D", callback_data="ans_D")],
+            [InlineKeyboardButton("🏠 Home (Abort)", callback_data="start_new")]
+        ])
     )
 
-    await safe_edit(q, text, answer_kb())
-
-# ================= ANSWER =================
 async def answer(update, ctx):
     q = update.callback_query; await q.answer()
 
     if "current" not in ctx.user_data:
-        await safe_edit(q, "⚠️ Session expired", InlineKeyboardMarkup(
-            [[InlineKeyboardButton("🏠 Home", callback_data="start")]]
-        ))
+        await safe_edit_or_send(q, "⚠️ Session expired", home_kb())
         return
 
     m = ctx.user_data["current"]
@@ -162,101 +205,157 @@ async def answer(update, ctx):
     if sel == m[8]:
         ctx.user_data["score"] += 1
     else:
-        ctx.user_data["wrong"].append(ctx.user_data["attempts"][-1])
+        ctx.user_data["wrong"].append(m)
 
     ctx.user_data["q_no"] += 1
+    ctx.user_data.pop("current", None)
     await send_mcq(q, ctx)
 
 # ================= RESULT =================
 async def show_result(q, ctx):
-    await safe_edit(
+    u = q.from_user
+    cur.execute(
+        "INSERT INTO scores VALUES(NULL,?,?,?,?,?)",
+        (u.id, ctx.user_data["exam"], ctx.user_data["topic"],
+         ctx.user_data["score"], ctx.user_data["q_no"],
+         datetime.date.today().isoformat())
+    )
+    conn.commit()
+
+    ctx.user_data["result_ctx"] = True
+
+    await safe_edit_or_send(
         q,
-        f"🎯 *Test Completed*\n\nScore: *{ctx.user_data['score']}/{ctx.user_data['q_no']}*",
+        f"🎯 *Result*\n\nScore: *{ctx.user_data['score']}/{ctx.user_data['q_no']}*",
         InlineKeyboardMarkup([
+            [InlineKeyboardButton("💖 Donate", callback_data="donate")],
             [InlineKeyboardButton("🔍 Review All", callback_data="review_all")],
             [InlineKeyboardButton("❌ Wrong Only", callback_data="wrong_only")],
-            [InlineKeyboardButton("🏠 Home", callback_data="start")]
+            [InlineKeyboardButton("🏆 Leaderboard", callback_data="leaderboard")],
+            [InlineKeyboardButton("📄 PDF", callback_data="pdf_result")],
+            [InlineKeyboardButton("🏠 Home", callback_data="start_new")]
         ])
     )
 
-# ================= REVIEW ALL =================
+# ================= REVIEW =================
 async def review_all(update, ctx):
     q = update.callback_query; await q.answer()
-    text = "📋 *Review All Questions*\n\n"
-    for i,a in enumerate(ctx.user_data["attempts"],1):
-        text += (
+    txt = "📋 *Review*\n\n"
+    for i,a in enumerate(ctx.user_data.get("attempts",[]),1):
+        txt += (
             f"*Q{i}.* {a['question']}\n"
             f"Your: {a['chosen']}\n"
             f"Correct: {a['correct']}\n"
             f"📘 {a['explanation']}\n\n"
         )
-    await safe_edit(q, text, InlineKeyboardMarkup(
-        [[InlineKeyboardButton("🏠 Home", callback_data="start")]]
-    ))
 
-# ================= WRONG ONLY =================
+    await safe_edit_or_send(
+        q, txt,
+        InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ Back", callback_data="back_result")],
+            [InlineKeyboardButton("🏠 Home", callback_data="start_new")]
+        ])
+    )
+
+# ================= WRONG =================
 async def wrong_only(update, ctx):
     q = update.callback_query; await q.answer()
-    ctx.user_data["wrong_index"] = 0
+    if not ctx.user_data.get("wrong"):
+        await safe_edit_or_send(q, "🎉 No wrong questions", home_kb())
+        return
+    ctx.user_data["wrong_i"] = 0
     await show_wrong(q, ctx)
 
 async def show_wrong(q, ctx):
-    idx = ctx.user_data["wrong_index"]
-    wrong = ctx.user_data["wrong"]
-
-    if not wrong:
-        await safe_edit(q, "🎉 No wrong questions", InlineKeyboardMarkup(
-            [[InlineKeyboardButton("🏠 Home", callback_data="start")]]
-        ))
-        return
-
-    a = wrong[idx]
-    text = (
-        f"❌ *Wrong {idx+1}/{len(wrong)}*\n\n"
-        f"{a['question']}\n\n"
-        f"✅ Correct: {a['correct']}\n"
-        f"📘 {a['explanation']}"
-    )
-
-    nav = []
-    if idx > 0:
-        nav.append(InlineKeyboardButton("⬅️ Prev", callback_data="w_prev"))
-    if idx < len(wrong)-1:
-        nav.append(InlineKeyboardButton("➡️ Next", callback_data="w_next"))
+    i = ctx.user_data["wrong_i"]
+    m = ctx.user_data["wrong"][i]
+    correct = m[4 if m[8]=="A" else 5 if m[8]=="B" else 6 if m[8]=="C" else 7]
 
     kb = []
-    if nav:
-        kb.append(nav)
-    kb.append([InlineKeyboardButton("🏠 Home", callback_data="start")])
+    nav = []
+    if i > 0: nav.append(InlineKeyboardButton("⬅️ Prev", callback_data="wrong_prev"))
+    if i < len(ctx.user_data["wrong"])-1:
+        nav.append(InlineKeyboardButton("➡️ Next", callback_data="wrong_next"))
+    if nav: kb.append(nav)
+    kb.append([InlineKeyboardButton("⬅️ Back", callback_data="back_result")])
+    kb.append([InlineKeyboardButton("🏠 Home", callback_data="start_new")])
 
-    await safe_edit(q, text, InlineKeyboardMarkup(kb))
+    await safe_edit_or_send(
+        q,
+        f"❌ *Wrong {i+1}*\n\n{m[3]}\n\n✅ {correct}\n📘 {m[9]}",
+        InlineKeyboardMarkup(kb)
+    )
 
-async def w_next(update, ctx):
+async def wrong_next(update, ctx):
     q = update.callback_query; await q.answer()
-    ctx.user_data["wrong_index"] += 1
+    ctx.user_data["wrong_i"] += 1
     await show_wrong(q, ctx)
 
-async def w_prev(update, ctx):
+async def wrong_prev(update, ctx):
     q = update.callback_query; await q.answer()
-    ctx.user_data["wrong_index"] -= 1
+    ctx.user_data["wrong_i"] -= 1
     await show_wrong(q, ctx)
+
+# ================= BACK =================
+async def back_result(update, ctx):
+    q = update.callback_query; await q.answer()
+    await show_result(q, ctx)
+
+# ================= PROFILE =================
+async def profile(update, ctx):
+    q = update.callback_query; await q.answer()
+    u = q.from_user
+
+    cur.execute(
+        "SELECT exam, topic, score, total, test_date FROM scores WHERE user_id=? ORDER BY id DESC",
+        (u.id,)
+    )
+    rows = cur.fetchall()
+
+    name = display_name(u)
+    txt = f"👤 *{name}*\n\n📚 *Your Tests*\n\n"
+
+    if not rows:
+        txt += "_No tests yet_"
+
+    for r in rows:
+        txt += f"{r[0]} / {r[1]} → *{r[2]}/{r[3]}* ({r[4]})\n"
+
+    await safe_edit_or_send(q, txt, home_kb())
+
+# ================= DONATE =================
+async def donate(update, ctx):
+    q = update.callback_query; await q.answer()
+    await safe_edit_or_send(
+        q,
+        f"🙏 *Support This Free Bot*\n\n`{UPI_ID}`",
+        InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="start_new")]])
+    )
 
 # ================= MAIN =================
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(start, "^start$"))
+
+    app.add_handler(CallbackQueryHandler(donate, "^donate$"))
+    app.add_handler(CallbackQueryHandler(profile, "^profile$"))
+    app.add_handler(CallbackQueryHandler(start_new, "^start_new$"))
+    app.add_handler(CallbackQueryHandler(back_result, "^back_result$"))
+
     app.add_handler(CallbackQueryHandler(exam_select, "^exam_"))
     app.add_handler(CallbackQueryHandler(topic_select, "^topic_"))
     app.add_handler(CallbackQueryHandler(answer, "^ans_"))
 
     app.add_handler(CallbackQueryHandler(review_all, "^review_all$"))
     app.add_handler(CallbackQueryHandler(wrong_only, "^wrong_only$"))
-    app.add_handler(CallbackQueryHandler(w_next, "^w_next$"))
-    app.add_handler(CallbackQueryHandler(w_prev, "^w_prev$"))
+    app.add_handler(CallbackQueryHandler(wrong_next, "^wrong_next$"))
+    app.add_handler(CallbackQueryHandler(wrong_prev, "^wrong_prev$"))
 
-    print("🤖 STEP 2 BOT RUNNING")
+    app.add_handler(CallbackQueryHandler(leaderboard, "^leaderboard$"))
+    app.add_handler(CallbackQueryHandler(pdf_result, "^pdf_result$"))
+
+    print("🤖 Bot Running...")
     app.run_polling()
 
 if __name__ == "__main__":
