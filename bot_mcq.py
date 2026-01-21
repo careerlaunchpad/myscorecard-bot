@@ -70,17 +70,25 @@ async def safe_edit_or_send(q, text, kb=None):
 def home_kb():
     return InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Home", callback_data="start_new")]])
 
+#------exam button----------
 def exam_kb():
     cur.execute("SELECT DISTINCT exam FROM mcq")
     exams = [r[0] for r in cur.fetchall()]
+
     kb = [
         [InlineKeyboardButton("💖 Donate", callback_data="donate")],
         [InlineKeyboardButton("👤 My Profile", callback_data="profile")]
     ]
-    for e in exams:
-        kb.append([InlineKeyboardButton(e, callback_data=f"exam_{e}")])
+
+    if exams:
+        for e in exams:
+            kb.append([InlineKeyboardButton(e, callback_data=f"exam_{e}")])
+    else:
+        kb.append([InlineKeyboardButton("⚠️ No Exams Available", callback_data="noop")])
+
     kb.append([InlineKeyboardButton("🛠 Admin", callback_data="admin_panel")])
     return InlineKeyboardMarkup(kb)
+
 
 def topic_kb(exam):
     cur.execute("SELECT DISTINCT topic FROM mcq WHERE exam=?", (exam,))
@@ -334,6 +342,33 @@ async def pdf_result(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 # ================= MAIN =================
 def main():
+    
+    # ---- BASIC ----
+    app.add_handler(CommandHandler("start", start))
+
+# ---- TOP LEVEL BUTTONS (FIRST) ----
+    app.add_handler(CallbackQueryHandler(admin_panel, "^admin_panel$"))
+    app.add_handler(CallbackQueryHandler(donate, "^donate$"))
+    app.add_handler(CallbackQueryHandler(profile, "^profile$"))
+
+# ---- NAVIGATION ----
+    app.add_handler(CallbackQueryHandler(start_new, "^start_new$"))
+    app.add_handler(CallbackQueryHandler(back_result, "^back_result$"))
+
+# ---- EXAM FLOW ----
+    app.add_handler(CallbackQueryHandler(exam_select, "^exam_"))
+    app.add_handler(CallbackQueryHandler(topic_select, "^topic_"))
+    app.add_handler(CallbackQueryHandler(answer, "^ans_"))
+
+# ---- RESULT FLOW ----
+    app.add_handler(CallbackQueryHandler(review_all, "^review_all$"))
+    app.add_handler(CallbackQueryHandler(wrong_only, "^wrong_only$"))
+    app.add_handler(CallbackQueryHandler(wrong_next, "^wrong_next$"))
+    app.add_handler(CallbackQueryHandler(wrong_prev, "^wrong_prev$"))
+    app.add_handler(CallbackQueryHandler(leaderboard, "^leaderboard$"))
+    app.add_handler(CallbackQueryHandler(pdf_result, "^pdf_result$"))
+
+    """
     app=ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start",start))
     app.add_handler(CallbackQueryHandler(start_new,"^start_new$"))
@@ -348,9 +383,11 @@ def main():
     app.add_handler(CallbackQueryHandler(leaderboard,"^leaderboard$"))
     app.add_handler(CallbackQueryHandler(pdf_result,"^pdf_result$"))
     app.add_handler(CallbackQueryHandler(profile,"^profile$"))
-    app.add_handler(CallbackQueryHandler(donate,"^donate$"))
+    app.add_handler(CallbackQueryHandler(donate,"^donate$"))"""
+    
     print("🤖 Bot Running...")
     app.run_polling()
 
 if __name__=="__main__":
     main()
+
