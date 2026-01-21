@@ -302,7 +302,7 @@ async def admin_panel(update,ctx):
         q,"🛠 *Admin Dashboard*",
         InlineKeyboardMarkup([
             [InlineKeyboardButton("🔍 Search MCQ",callback_data="admin_search")],
-            [InlineKeyboardButton("📤 Edit MCQ",callback_data="admin_mcq_menu")],
+        
             [InlineKeyboardButton("📤 Upload Excel",callback_data="admin_upload")],
             [InlineKeyboardButton("🧾 Export DB",callback_data="admin_export")],
             [InlineKeyboardButton("⬅️ Back",callback_data="start_new")]
@@ -331,6 +331,29 @@ async def admin_text_router(update,ctx):
         kb=[[InlineKeyboardButton(r[1][:40]+"…",callback_data=f"admin_mcq_{r[0]}")] for r in rows]
         kb.append([InlineKeyboardButton("⬅️ Back",callback_data="admin_panel")])
         await update.message.reply_text("📋 Select MCQ",reply_markup=InlineKeyboardMarkup(kb))
+        
+async def admin_do_search(update, ctx):
+    kw = update.message.text.strip()
+    cur.execute(
+        "SELECT id, question FROM mcq WHERE question LIKE ? LIMIT 20",
+        (f"%{kw}%",)
+    )
+    rows = cur.fetchall()
+
+    if not rows:
+        await update.message.reply_text("❌ No MCQ found")
+        return
+
+    kb = [
+        [InlineKeyboardButton(r[1][:40]+"…", callback_data=f"admin_mcq_{r[0]}")]
+        for r in rows
+    ]
+    kb.append([InlineKeyboardButton("⬅️ Back", callback_data="admin_panel")])
+
+    await update.message.reply_text(
+        "📋 Select MCQ to Edit",
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
 
 # ================= ADMIN EDIT =================
 async def admin_mcq_menu(update,ctx):
@@ -372,6 +395,45 @@ async def admin_save_edit(update,ctx):
     conn.commit()
     ctx.user_data.clear()
     await update.message.reply_text("✅ Updated")
+
+#-----admin delete mcq-------------
+async def admin_delete_mcq(update, ctx):
+    q = update.callback_query
+    await q.answer()
+
+    mcq_id = ctx.user_data["edit_id"]
+    cur.execute("SELECT * FROM mcq WHERE id=?", (mcq_id,))
+    ctx.user_data["undo"] = cur.fetchone()
+
+    cur.execute("DELETE FROM mcq WHERE id=?", (mcq_id,))
+    conn.commit()
+
+    ctx.user_data["admin_mode"] = "undo_available"
+
+    await q.message.reply_text(
+        "🗑 MCQ Deleted",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("↩ Undo", callback_data="undo_delete")],
+            [InlineKeyboardButton("🏠 Home", callback_data="start_new")]
+        ])
+    )
+#------------------admin undo----------
+async def admin_undo(update, ctx):
+    q = update.callback_query
+    await q.answer()
+
+    m = ctx.user_data.get("undo")
+    if not m:
+        return
+
+    cur.execute(
+        "INSERT INTO mcq VALUES(NULL,?,?,?,?,?,?,?,?,?)",
+        m[1:]
+    )
+    conn.commit()
+
+    await q.message.reply_text("♻️ Undo successful")
+
 async def admin_upload(update, ctx):
     q = update.callback_query; await q.answer()
     ctx.user_data["awaiting_excel"] = True
@@ -431,9 +493,13 @@ def main():
     app.add_handler(CallbackQueryHandler(admin_upload, "^admin_upload$"))
     app.add_handler(CallbackQueryHandler(admin_export, "^admin_export$"))
 
+  
+
     app.add_handler(CallbackQueryHandler(admin_panel,"^admin_panel$"))
     app.add_handler(CallbackQueryHandler(admin_search,"^admin_search$"))
     app.add_handler(CallbackQueryHandler(admin_mcq_menu,"^admin_mcq_"))
+    app.add_handler(CallbackQueryHandler(admin_mcq_menu, "^admin_mcq_"))
+
     app.add_handler(CallbackQueryHandler(admin_edit_field,"^edit_"))
 
     print("🤖 Bot Running...")
@@ -441,6 +507,7 @@ def main():
 
 if __name__=="__main__":
     main()
+
 
 
 
