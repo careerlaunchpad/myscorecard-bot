@@ -300,6 +300,20 @@ async def wrong_prev(update, ctx):
 async def back_result(update, ctx):
     q = update.callback_query; await q.answer()
     await show_result(q, ctx)
+# ================= LEADERBOARD =================
+async def leaderboard(update, ctx):
+    q = update.callback_query
+    await q.answer()
+
+    exam = ctx.user_data.get("exam")
+    topic = ctx.user_data.get("topic")
+
+    if not exam or not topic:
+        await safe_edit_or_send(
+            q,
+            "⚠️ Leaderboard देखने के लिए पहले कोई test complete करें",
+            InlineKeyboardMarkup([
+                [Inline
 
 # ================= PROFILE =================
 async def profile(update, ctx):
@@ -360,3 +374,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
