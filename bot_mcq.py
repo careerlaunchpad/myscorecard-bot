@@ -179,7 +179,20 @@ async def send_mcq(q,ctx):
 
     m=cur.fetchone()
     if not m:
-        await show_result(q,ctx); return
+    # Safety check – test properly started?
+    if "q_no" not in ctx.user_data or ctx.user_data["q_no"] == 0:
+        await safe_edit_or_send(
+            q,
+            "⚠️ No questions found for this topic.",
+            InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Back", callback_data="start_new")]
+            ])
+        )
+        return
+
+    await show_result(q, ctx)
+    return
+
 
     ctx.user_data["current"]=m
     ctx.user_data["asked"].append(m[0])
@@ -234,14 +247,30 @@ async def answer(update, ctx):
 
 # ================= RESULT =================
 async def show_result(q, ctx):
+    # 🔐 SAFETY GUARDS
+    exam = ctx.user_data.get("exam")
+    topic = ctx.user_data.get("topic")
+    score = ctx.user_data.get("score", 0)
+    total = ctx.user_data.get("q_no", 0)
+
+    if not exam or not topic or total == 0:
+        await safe_edit_or_send(
+            q,
+            "⚠️ Test data incomplete. Please start again.",
+            InlineKeyboardMarkup([
+                [InlineKeyboardButton("🏠 Home", callback_data="start_new")]
+            ])
+        )
+        return
+
     cur.execute(
         "INSERT INTO scores VALUES(NULL,?,?,?,?,?,?)",
         (
             q.from_user.id,
-            ctx.user_data["exam"],
-            ctx.user_data["topic"],
-            ctx.user_data["score"],
-            ctx.user_data["q_no"],
+            exam,
+            topic,
+            score,
+            total,
             datetime.date.today().isoformat()
         )
     )
@@ -249,7 +278,7 @@ async def show_result(q, ctx):
 
     await safe_edit_or_send(
         q,
-        f"🎯 *Completed*\n\nScore: *{ctx.user_data['score']}/{ctx.user_data['q_no']}*",
+        f"🎯 *Test Completed*\n\nScore: *{score}/{total}*",
         InlineKeyboardMarkup([
             [InlineKeyboardButton("🔍 Review All", callback_data="review_all")],
             [InlineKeyboardButton("❌ Wrong Only", callback_data="wrong_only")],
@@ -258,6 +287,7 @@ async def show_result(q, ctx):
             [InlineKeyboardButton("🏠 Home", callback_data="start_new")]
         ])
     )
+
 # ================= REVIEW =================
 async def review_all(update,ctx):
     q=update.callback_query; await q.answer()
@@ -778,6 +808,7 @@ def main():
 
 if __name__=="__main__":
     main()
+
 
 
 
