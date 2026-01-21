@@ -233,7 +233,33 @@ async def answer(update, ctx):
     await send_mcq(q, ctx)
 
 # ================= RESULT =================
-async def show_result(q,ctx):
+async def show_result(q, ctx):
+    cur.execute(
+        "INSERT INTO scores VALUES(NULL,?,?,?,?,?,?)",
+        (
+            q.from_user.id,
+            ctx.user_data["exam"],
+            ctx.user_data["topic"],
+            ctx.user_data["score"],
+            ctx.user_data["q_no"],
+            datetime.date.today().isoformat()
+        )
+    )
+    conn.commit()
+
+    await safe_edit_or_send(
+        q,
+        f"🎯 *Completed*\n\nScore: *{ctx.user_data['score']}/{ctx.user_data['q_no']}*",
+        InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔍 Review All", callback_data="review_all")],
+            [InlineKeyboardButton("❌ Wrong Only", callback_data="wrong_only")],
+            [InlineKeyboardButton("🏆 Leaderboard", callback_data="leaderboard")],
+            [InlineKeyboardButton("📄 Download PDF", callback_data="pdf_result")],
+            [InlineKeyboardButton("🏠 Home", callback_data="start_new")]
+        ])
+    )
+
+"""async def show_result(q,ctx):
     user = q.from_user
 username = (
     f"@{user.username}"
@@ -260,7 +286,8 @@ cur.execute(
 )
 conn.commit()
 
-    await safe_edit_or_send(q,f"🎯 *Completed*\nScore: *{ctx.user_data['score']}/{ctx.user_data['q_no']}*",
+    await safe_edit_or_send(q,
+                        f"🎯 *Completed*\nScore: *{ctx.user_data['score']}/{ctx.user_data['q_no']}*",
         InlineKeyboardMarkup([
             [InlineKeyboardButton("🔍 Review All",callback_data="review_all")],
             [InlineKeyboardButton("❌ Wrong Only",callback_data="wrong_only")],
@@ -269,7 +296,7 @@ conn.commit()
             [InlineKeyboardButton("🏠 Home",callback_data="start_new")]
         ])
     )
-
+"""
 # ================= REVIEW =================
 async def review_all(update,ctx):
     q=update.callback_query; await q.answer()
@@ -790,6 +817,7 @@ def main():
 
 if __name__=="__main__":
     main()
+
 
 
 
