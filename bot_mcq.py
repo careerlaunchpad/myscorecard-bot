@@ -217,13 +217,70 @@ async def review_all(update,ctx):
     await safe_edit_or_send(q,txt,home_kb())
 
 # ================= WRONG =================
-async def wrong_only(update,ctx):
+"""async def wrong_only(update,ctx):
     q=update.callback_query; await q.answer()
     if not ctx.user_data["wrong"]:
         await safe_edit_or_send(q,"🎉 No wrong questions",home_kb()); return
     m=ctx.user_data["wrong"][0]
     correct=m[4 if m[8]=="A" else 5 if m[8]=="B" else 6 if m[8]=="C" else 7]
-    await safe_edit_or_send(q,f"{m[3]}\n\n✅ {correct}\n📘 {m[9]}",home_kb())
+    await safe_edit_or_send(q,f"{m[3]}\n\n✅ {correct}\n📘 {m[9]}",home_kb())"""
+async def wrong_only(update, ctx):
+    q = update.callback_query
+    await q.answer()
+
+    if not ctx.user_data.get("wrong"):
+        await safe_edit_or_send(q, "🎉 No wrong questions", home_kb())
+        return
+
+    ctx.user_data["wrong_index"] = 0
+    await show_wrong_question(q, ctx)
+
+#--------show wrong question----------------
+async def show_wrong_question(q, ctx):
+    idx = ctx.user_data["wrong_index"]
+    wrong_list = ctx.user_data["wrong"]
+
+    if idx < 0 or idx >= len(wrong_list):
+        return
+
+    m = wrong_list[idx]
+    correct = m[4 if m[8]=="A" else 5 if m[8]=="B" else 6 if m[8]=="C" else 7]
+
+    text = (
+        f"❌ *Wrong Question {idx+1}/{len(wrong_list)}*\n\n"
+        f"{m[3]}\n\n"
+        f"✅ *Correct Answer:* {correct}\n"
+        f"📘 {m[9]}"
+    )
+
+    kb = []
+
+    nav = []
+    if idx > 0:
+        nav.append(InlineKeyboardButton("⬅️ Prev", callback_data="wrong_prev"))
+    if idx < len(wrong_list) - 1:
+        nav.append(InlineKeyboardButton("➡️ Next", callback_data="wrong_next"))
+
+    if nav:
+        kb.append(nav)
+
+    kb.append([InlineKeyboardButton("🏠 Home", callback_data="start_new")])
+
+    await safe_edit_or_send(q, text, InlineKeyboardMarkup(kb))
+
+#--------Next / Prev handlers-----
+async def wrong_next(update, ctx):
+    q = update.callback_query
+    await q.answer()
+    ctx.user_data["wrong_index"] += 1
+    await show_wrong_question(q, ctx)
+
+async def wrong_prev(update, ctx):
+    q = update.callback_query
+    await q.answer()
+    ctx.user_data["wrong_index"] -= 1
+    await show_wrong_question(q, ctx)
+
 
 # ================= LEADERBOARD =================
 async def leaderboard(update,ctx):
@@ -621,7 +678,11 @@ def main():
     app.add_handler(CallbackQueryHandler(topic_select,"^topic_"))
     app.add_handler(CallbackQueryHandler(answer,"^ans_"))
     app.add_handler(CallbackQueryHandler(review_all,"^review_all$"))
-    app.add_handler(CallbackQueryHandler(wrong_only,"^wrong_only$"))
+    
+    app.add_handler(CallbackQueryHandler(wrong_only, "^wrong_only$"))
+    app.add_handler(CallbackQueryHandler(wrong_next, "^wrong_next$"))
+    app.add_handler(CallbackQueryHandler(wrong_prev, "^wrong_prev$"))
+
     app.add_handler(CallbackQueryHandler(leaderboard,"^leaderboard$"))
     app.add_handler(CallbackQueryHandler(pdf_result, "^pdf_result$"))
 
@@ -645,6 +706,7 @@ def main():
 
 if __name__=="__main__":
     main()
+
 
 
 
