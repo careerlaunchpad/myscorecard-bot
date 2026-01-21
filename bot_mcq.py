@@ -261,7 +261,7 @@ cur.execute(
 conn.commit()
 
 
-await safe_edit_or_send(
+    await safe_edit_or_send(
         q,
         f"🎯 *Completed*\nScore: *{ctx.user_data['score']}/{ctx.user_data['q_no']}*",
         InlineKeyboardMarkup([
@@ -793,6 +793,7 @@ def main():
 
 if __name__=="__main__":
     main()
+
 
 
 
