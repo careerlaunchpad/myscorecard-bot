@@ -39,7 +39,38 @@ CREATE TABLE IF NOT EXISTS scores(
  test_date TEXT
 )
 """)
+
 conn.commit()
+
+# ---- SAFE MIGRATION FOR USERNAME ----
+cur.execute("PRAGMA table_info(scores)")
+cols = [c[1] for c in cur.fetchall()]
+if "username" not in cols:
+    cur.execute("ALTER TABLE scores ADD COLUMN username TEXT")
+    conn.commit()
+
+# total users
+cur.execute("SELECT COUNT(DISTINCT user_id) FROM scores")
+total_users = cur.fetchone()[0]
+
+# active users (last 7 days)
+cur.execute("""
+    SELECT COUNT(DISTINCT user_id)
+    FROM scores
+    WHERE test_date >= date('now','-7 day')
+""")
+active_users = cur.fetchone()[0]
+
+# most attempted exam
+cur.execute("""
+    SELECT exam, COUNT(*) as c
+    FROM scores
+    GROUP BY exam
+    ORDER BY c DESC
+    LIMIT 1
+""")
+row = cur.fetchone()
+popular_exam = row[0] if row else "N/A"
 
 # ================= HELPERS =================
 def is_admin(uid): return uid in ADMIN_IDS
@@ -203,13 +234,32 @@ async def answer(update, ctx):
 
 # ================= RESULT =================
 async def show_result(q,ctx):
-    cur.execute(
-        "INSERT INTO scores VALUES(NULL,?,?,?,?,?,?)",
-        (q.from_user.id,ctx.user_data["exam"],
-         ctx.user_data["topic"],ctx.user_data["score"],
-         ctx.user_data["q_no"],datetime.date.today().isoformat())
+    user = q.from_user
+username = (
+    f"@{user.username}"
+    if user.username
+    else f"{user.first_name or ''} {user.last_name or ''}".strip()
+    or f"User_{user.id}"
+)
+
+cur.execute(
+    """
+    INSERT INTO scores
+    (user_id, exam, topic, score, total, test_date, username)
+    VALUES (?,?,?,?,?,?,?)
+    """,
+    (
+        user.id,
+        ctx.user_data["exam"],
+        ctx.user_data["topic"],
+        ctx.user_data["score"],
+        ctx.user_data["q_no"],
+        datetime.date.today().isoformat(),
+        username
     )
-    conn.commit()
+)
+conn.commit()
+
 
     await safe_edit_or_send(
         q,
@@ -302,17 +352,31 @@ async def leaderboard(update,ctx):
     q=update.callback_query; await q.answer()
     e,t=ctx.user_data.get("exam"),ctx.user_data.get("topic")
     cur.execute("""
-        SELECT user_id, MAX(score)
-        FROM scores WHERE exam=? AND topic=?
-        GROUP BY user_id ORDER BY MAX(score) DESC LIMIT 10
-    """,(e,t))
+    SELECT username, MAX(score)
+    FROM scores
+    WHERE exam=? AND topic=?
+    GROUP BY user_id
+    ORDER BY MAX(score) DESC
+    LIMIT 10""",(e,t))
+
     rows=cur.fetchall()
-    txt=f"🏆 *{e}/{t}*\n\n"
+    #txt=f"🏆 *{e}/{t}*\n\n"
+    name = r[0] or "Unknown User" #new update code
+    txt += f"{i}. *{name}* → {r[1]}\n"
+
     for i,r in enumerate(rows,1):
         txt+=f"{i}. `{r[0]}` → {r[1]}\n"
     await safe_edit_or_send(q,txt,home_kb())
 # ================= MY SCORE =================
 async def myscore(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    display_name = (
+    f"@{user.username}"
+    if user.username
+    else f"{user.first_name or ''} {user.last_name or ''}".strip()
+    or f"User_{user.id}"
+    )
+
     msg = update.effective_message   # 🔥 FIX
     uid = update.effective_user.id
 
@@ -334,8 +398,10 @@ async def myscore(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             ])
         )
         return
-
+        
+    text = f"👤 *Profile: {display_name}*\n\n" #update
     text = "📊 *Your Recent Tests*\n\n"
+    
     for r in rows:
         text += f"{r[0]} / {r[1]} → *{r[2]}/{r[3]}* ({r[4]})\n"
 
@@ -403,7 +469,13 @@ async def admin_panel(update,ctx):
     if not is_admin(q.from_user.id): return
     ctx.user_data.clear()
     await safe_edit_or_send(
-        q,"🛠 *Admin Dashboard*",
+        q,f"""
+        🛠 *Admin Dashboard*
+        
+        👥 Total Users: *{total_users}*
+        🔥 Active Users (7d): *{active_users}*
+        🏆 Most Popular Exam: *{popular_exam}*
+        """,
         InlineKeyboardMarkup([
             [InlineKeyboardButton("📊 User Analytics", callback_data="admin_stats")],
             
@@ -721,6 +793,7 @@ def main():
 
 if __name__=="__main__":
     main()
+
 
 
 
