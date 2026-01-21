@@ -346,7 +346,7 @@ async def wrong_only(update, ctx):
 
 #--------- show wrong------------------
 async def show_wrong(q, ctx):
-    i = ctx.user_data["wrong_i"]
+    #i = ctx.user_data["wrong_i"]
     m = ctx.user_data["wrong"][i]
     correct = m[4 if m[8]=="A" else 5 if m[8]=="B" else 6 if m[8]=="C" else 7]
 
@@ -562,7 +562,6 @@ def main():
     app.add_handler(CallbackQueryHandler(donate, "^donate$"))
     app.add_handler(CallbackQueryHandler(profile, "^profile$"))
     app.add_handler(CallbackQueryHandler(start_new, "^start_new$"))
-    app.add_handler(CallbackQueryHandler(back_result, "^back_result$"))
     app.add_handler(CallbackQueryHandler(back_to_result, "^back_result$"))
 
 
@@ -583,6 +582,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
