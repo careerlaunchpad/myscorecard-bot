@@ -300,6 +300,7 @@ async def wrong_prev(update, ctx):
 async def back_result(update, ctx):
     q = update.callback_query; await q.answer()
     await show_result(q, ctx)
+
 # ================= LEADERBOARD =================
 async def leaderboard(update, ctx):
     q = update.callback_query
@@ -313,7 +314,39 @@ async def leaderboard(update, ctx):
             q,
             "⚠️ Leaderboard देखने के लिए पहले कोई test complete करें",
             InlineKeyboardMarkup([
-                [Inline
+                [InlineKeyboardButton("⬅️ Back", callback_data="start_new")]
+            ])
+        )
+        return
+
+    cur.execute("""
+        SELECT username, MAX(score)
+        FROM scores
+        WHERE exam=? AND topic=?
+        GROUP BY user_id
+        ORDER BY MAX(score) DESC
+        LIMIT 10
+    """, (exam, topic))
+
+    rows = cur.fetchall()
+
+    if not rows:
+        text = "📊 अभी तक कोई result नहीं मिला"
+    else:
+        text = f"🏆 *Leaderboard — {exam} / {topic}*\n\n"
+        for i, r in enumerate(rows, 1):
+            name = r[0] if r[0] else "Unknown User"
+            text += f"{i}. *{name}* → {r[1]}\n"
+
+    await safe_edit_or_send(
+        q,
+        text,
+        InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ Back", callback_data="review_all")],
+            [InlineKeyboardButton("🏠 Home", callback_data="start_new")]
+        ])
+    )
+
 
 # ================= PROFILE =================
 async def profile(update, ctx):
@@ -374,4 +407,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
