@@ -260,10 +260,7 @@ cur.execute(
 )
 conn.commit()
 
-
-    await safe_edit_or_send(
-        q,
-        f"🎯 *Completed*\nScore: *{ctx.user_data['score']}/{ctx.user_data['q_no']}*",
+    await safe_edit_or_send(q,f"🎯 *Completed*\nScore: *{ctx.user_data['score']}/{ctx.user_data['q_no']}*",
         InlineKeyboardMarkup([
             [InlineKeyboardButton("🔍 Review All",callback_data="review_all")],
             [InlineKeyboardButton("❌ Wrong Only",callback_data="wrong_only")],
@@ -793,6 +790,7 @@ def main():
 
 if __name__=="__main__":
     main()
+
 
 
 
