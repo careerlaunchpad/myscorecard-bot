@@ -316,7 +316,11 @@ async def profile(update, ctx):
     q=update.callback_query; await q.answer()
     u=q.from_user
     cur.execute(
-        "SELECT exam,topic,score,total,test_date FROM scores WHERE user_id=? ORDER BY id DESC",
+        """SELECT exam, topic, MAX(score) as score, total, MAX(test_date)
+        FROM scores
+        WHERE user_id=?
+        GROUP BY exam, topic
+        ORDER BY MAX(test_date) DESC""",
         (u.id,)
     )
     rows=cur.fetchall()
@@ -599,6 +603,7 @@ def main():
 
 if __name__=="__main__":
     main()
+
 
 
 
