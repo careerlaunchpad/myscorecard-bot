@@ -39,6 +39,15 @@ CREATE TABLE IF NOT EXISTS mcq(
 )
 """)
 
+# ---- SAFE MIGRATION FOR TEST ENABLE / DISABLE ----
+cur.execute("PRAGMA table_info(mcq)")
+cols = [c[1] for c in cur.fetchall()]
+
+if "is_active" not in cols:
+    cur.execute("ALTER TABLE mcq ADD COLUMN is_active INTEGER DEFAULT 1")
+    conn.commit()
+
+
 cur.execute("""
 CREATE TABLE IF NOT EXISTS scores(
  id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,13 +75,62 @@ async def safe_edit_or_send(q, text, kb=None):
     except BadRequest:
         await q.message.reply_text(text, reply_markup=kb, parse_mode="Markdown")
 
+#-----------admin analytics-------------------------
+def get_admin_analytics():
+    # Total users
+    cur.execute("SELECT COUNT(*) FROM users")
+    total_users = cur.fetchone()[0] or 0
+
+    # Active today
+    today = datetime.date.today().isoformat()
+    cur.execute(
+        "SELECT COUNT(DISTINCT user_id) FROM scores WHERE test_date=?",
+        (today,)
+    )
+    active_today = cur.fetchone()[0] or 0
+
+    # Active last 7 days
+    cur.execute("""
+        SELECT COUNT(DISTINCT user_id)
+        FROM scores
+        WHERE test_date >= date('now','-7 day')
+    """)
+    active_7d = cur.fetchone()[0] or 0
+
+    # Total tests given
+    cur.execute("SELECT COUNT(*) FROM scores")
+    total_tests = cur.fetchone()[0] or 0
+
+    # Most attempted exam/topic
+    cur.execute("""
+        SELECT exam, topic, COUNT(*) as cnt
+        FROM scores
+        GROUP BY exam, topic
+        ORDER BY cnt DESC
+        LIMIT 1
+    """)
+    row = cur.fetchone()
+
+    if row:
+        popular_test = f"{row[0]} / {row[1]} ({row[2]} attempts)"
+    else:
+        popular_test = "No data yet"
+
+    return {
+        "total_users": total_users,
+        "active_today": active_today,
+        "active_7d": active_7d,
+        "total_tests": total_tests,
+        "popular_test": popular_test
+    }
+
 # ================= UI =================
 def home_kb():
     return InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Home", callback_data="start_new")]])
 
 #------exam button----------
 def exam_kb():
-    cur.execute("SELECT DISTINCT exam FROM mcq")
+    cur.execute("SELECT DISTINCT exam FROM mcq WHERE is_active=1")
     exams = [r[0] for r in cur.fetchall()]
 
     kb = [
@@ -123,7 +181,7 @@ async def topic_select(update, ctx):
     q = update.callback_query; await q.answer()
     exam = ctx.user_data["exam"]
     topic = q.data.replace("topic_", "")
-    cur.execute("SELECT COUNT(*) FROM mcq WHERE exam=? AND topic=?", (exam, topic))
+    cur.execute("SELECT COUNT(*) FROM mcq WHERE exam=? AND topic=? AND is_active=1", (exam, topic))
     total = cur.fetchone()[0]
     if total == 0:
         await safe_edit_or_send(q, "⚠️ No questions found", home_kb()); return
@@ -145,7 +203,7 @@ async def send_mcq(q, ctx):
             [exam, topic] + asked
         )
     else:
-        cur.execute("SELECT * FROM mcq WHERE exam=? AND topic=? ORDER BY RANDOM() LIMIT 1", (exam, topic))
+        cur.execute("SELECT * FROM mcq WHERE exam=? AND topic=? AND is_active=1 ORDER BY RANDOM() LIMIT 1", (exam, topic))
     m = cur.fetchone()
     if not m:
         await show_result(q, ctx); return
@@ -383,13 +441,38 @@ async def admin_panel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    stats = get_admin_analytics()
+
+    text = (
+        "🛠 *Admin Analytics Dashboard*\n\n"
+        f"👥 *Total Users:* {stats['total_users']}\n"
+        f"🔥 *Active Today:* {stats['active_today']}\n"
+        f"📆 *Active (7 Days):* {stats['active_7d']}\n"
+        f"📝 *Total Tests Given:* {stats['total_tests']}\n\n"
+        f"🏆 *Most Popular Test:*\n{stats['popular_test']}"
+    )
+
     await safe_edit_or_send(
         q,
-        "🛠 *Admin Dashboard*\n\nChoose an option 👇",
+        text,
         InlineKeyboardMarkup([
-            [InlineKeyboardButton("📤 Upload MCQs (Excel)", callback_data="admin_upload")],
+            #[InlineKeyboardButton("📊 Analytics", callback_data="admin_stats")],
+            [InlineKeyboardButton("👥 User Management", callback_data="admin_users")],
+            [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast")],
+            [InlineKeyboardButton("💾 Backup Database", callback_data="admin_backup")],
+            [InlineKeyboardButton("♻️ Restore Database", callback_data="admin_restore")],
+            [InlineKeyboardButton("➕ Add MCQ (Manual)", callback_data="admin_add_mcq")],
+
+            [InlineKeyboardButton("🚫 Enable / Disable Test", callback_data="admin_toggle_test")],
+
+            
+            [InlineKeyboardButton("🔁 Duplicate MCQs", callback_data="admin_duplicates")],
+            
             [InlineKeyboardButton("🔍 Search / Edit MCQ", callback_data="admin_search")],
+            
+            [InlineKeyboardButton("📤 Upload MCQs (Excel)", callback_data="admin_upload")],
             [InlineKeyboardButton("🧾 Export MCQ DB", callback_data="admin_export")],
+            
             [InlineKeyboardButton("⬅️ Back", callback_data="start_new")]
         ])
     )
@@ -458,8 +541,41 @@ async def admin_search(update, ctx):
     )
 #---------------------Admin text router (SEARCH + EDIT SAVE)------------
 async def admin_text_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
+    if update.effective_user.id not in ADMIN_IDS:
         return
+
+    # ❌ cancel broadcast
+    if update.message.text == "/cancel":
+        ctx.user_data.clear()
+        await update.message.reply_text("❌ Broadcast cancelled")
+        return
+
+    # 📢 BROADCAST MODE
+    if ctx.user_data.get("admin_mode") == "broadcast":
+        msg = update.message.text
+
+        cur.execute("SELECT user_id FROM users")
+        users = cur.fetchall()
+
+        sent = 0
+        failed = 0
+
+        for (uid,) in users:
+            try:
+                await ctx.bot.send_message(uid, msg)
+                sent += 1
+            except:
+                failed += 1
+
+        ctx.user_data.clear()
+
+        await update.message.reply_text(
+            f"✅ *Broadcast Completed*\n\n"
+            f"📨 Sent: {sent}\n"
+            f"❌ Failed: {failed}",
+            parse_mode="Markdown"
+        )
+
 
     # SEARCH MODE
     if ctx.user_data.get("admin_mode") == "search":
@@ -499,6 +615,8 @@ async def admin_text_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
         ctx.user_data.clear()
         await update.message.reply_text("✅ MCQ Updated Successfully")
+
+
 #------MCQ Edit Menu-------------
 async def admin_mcq_menu(update, ctx):
     q = update.callback_query
@@ -533,6 +651,417 @@ async def admin_edit_field(update, ctx):
 
     await q.message.reply_text("✏️ Send new value")
 
+#--------admin user control------------------
+async def admin_users(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    if not is_admin(q.from_user.id):
+        return
+
+    cur.execute("""
+        SELECT 
+            u.user_id,
+            u.username,
+            u.first_name,
+            u.last_name,
+            COUNT(s.id) as tests,
+            MAX(s.test_date) as last_active
+        FROM users u
+        LEFT JOIN scores s ON u.user_id = s.user_id
+        GROUP BY u.user_id
+        ORDER BY last_active DESC
+        LIMIT 20
+    """)
+    rows = cur.fetchall()
+
+    if not rows:
+        await safe_edit_or_send(
+            q,
+            "👥 No users found",
+            InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Back", callback_data="admin_panel")]
+            ])
+        )
+        return
+
+    text = "👥 *User Management (Read-Only)*\n\n"
+
+    kb = []
+
+    for r in rows:
+        uid, username, fn, ln, tests, last = r
+
+        name = (
+            f"@{username}" if username
+            else f"{fn or ''} {ln or ''}".strip()
+            or f"User_{uid}"
+        )
+
+        text += (
+            f"👤 *{name}*\n"
+            f"📝 Tests: {tests or 0}\n"
+            f"📅 Last Active: {last or 'N/A'}\n\n"
+        )
+
+        kb.append([
+            InlineKeyboardButton(
+                f"🔍 {name[:25]}",
+                callback_data=f"admin_user_{uid}"
+            )
+        ])
+
+    kb.append([InlineKeyboardButton("⬅️ Back", callback_data="admin_panel")])
+
+    await safe_edit_or_send(q, text, InlineKeyboardMarkup(kb))
+
+#-------admin user history------- ------------
+async def admin_user_history(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    if not is_admin(q.from_user.id):
+        return
+
+    user_id = int(q.data.split("_")[-1])
+
+    cur.execute(
+        "SELECT exam, topic, score, total, test_date FROM scores WHERE user_id=? ORDER BY id DESC",
+        (user_id,)
+    )
+    rows = cur.fetchall()
+
+    cur.execute(
+        "SELECT username, first_name, last_name FROM users WHERE user_id=?",
+        (user_id,)
+    )
+    u = cur.fetchone()
+
+    name = (
+        f"@{u[0]}" if u and u[0]
+        else f"{u[1] or ''} {u[2] or ''}".strip()
+        if u else f"User_{user_id}"
+    )
+
+    text = f"👤 *{name}*\n\n"
+
+    if not rows:
+        text += "_No tests given yet_"
+    else:
+        for r in rows:
+            text += (
+                f"📚 {r[0]} / {r[1]} → *{r[2]}/{r[3]}* ({r[4]})\n"
+            )
+
+    await safe_edit_or_send(
+        q,
+        text,
+        InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ Back", callback_data="admin_users")],
+            [InlineKeyboardButton("🏠 Home", callback_data="start_new")]
+        ])
+    )
+#-------------admin duplicataed--------------
+async def admin_duplicates(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    if not is_admin(q.from_user.id):
+        return
+
+    cur.execute("""
+        SELECT exam, topic, question, COUNT(*) as cnt
+        FROM mcq
+        GROUP BY exam, topic, question
+        HAVING cnt > 1
+        ORDER BY cnt DESC
+        LIMIT 50
+    """)
+
+    rows = cur.fetchall()
+
+    if not rows:
+        await safe_edit_or_send(
+            q,
+            "✅ *No duplicate MCQs found!*",
+            InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Back", callback_data="admin_panel")]
+            ])
+        )
+        return
+
+    text = "🔁 *Duplicate MCQs Detected*\n\n"
+
+    for i, r in enumerate(rows, 1):
+        exam, topic, question, cnt = r
+        short_q = question[:80] + ("…" if len(question) > 80 else "")
+        text += (
+            f"*{i}.* `{cnt} times`\n"
+            f"📘 {exam} / {topic}\n"
+            f"❓ {short_q}\n\n"
+        )
+
+    await safe_edit_or_send(
+        q,
+        text,
+        InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ Back", callback_data="admin_panel")]
+        ])
+    )
+
+#------admin add mcq--------------
+async def admin_add_mcq(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    if q.from_user.id not in ADMIN_IDS:
+        return
+
+    ctx.user_data.clear()
+    ctx.user_data["admin_add"] = {"step": "exam"}
+
+    await q.message.reply_text(
+        "✍️ *Manual MCQ Add*\n\n👉 Step 1/9\n\n*Enter Exam Name:*",
+        parse_mode="Markdown"
+    )
+
+#-------admin add mcq text---------------------
+async def admin_add_mcq_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS:
+        return
+
+    data = ctx.user_data.get("admin_add")
+    if not data:
+        return  # not in manual add mode
+
+    text = update.message.text.strip()
+    step = data["step"]
+
+    if step == "exam":
+        data["exam"] = text
+        data["step"] = "topic"
+        await update.message.reply_text("👉 Step 2/9\n\n*Enter Topic:*", parse_mode="Markdown")
+
+    elif step == "topic":
+        data["topic"] = text
+        data["step"] = "question"
+        await update.message.reply_text("👉 Step 3/9\n\n*Enter Question:*", parse_mode="Markdown")
+
+    elif step == "question":
+        data["question"] = text
+        data["step"] = "a"
+        await update.message.reply_text("👉 Step 4/9\n\n*Option A:*", parse_mode="Markdown")
+
+    elif step == "a":
+        data["a"] = text
+        data["step"] = "b"
+        await update.message.reply_text("👉 Step 5/9\n\n*Option B:*", parse_mode="Markdown")
+
+    elif step == "b":
+        data["b"] = text
+        data["step"] = "c"
+        await update.message.reply_text("👉 Step 6/9\n\n*Option C:*", parse_mode="Markdown")
+
+    elif step == "c":
+        data["c"] = text
+        data["step"] = "d"
+        await update.message.reply_text("👉 Step 7/9\n\n*Option D:*", parse_mode="Markdown")
+
+    elif step == "d":
+        data["d"] = text
+        data["step"] = "correct"
+        await update.message.reply_text(
+            "👉 Step 8/9\n\n*Correct Option?*\nSend one letter: A / B / C / D",
+            parse_mode="Markdown"
+        )
+
+    elif step == "correct":
+        if text.upper() not in ["A", "B", "C", "D"]:
+            await update.message.reply_text("❌ Please send only A / B / C / D")
+            return
+        data["correct"] = text.upper()
+        data["step"] = "explanation"
+        await update.message.reply_text("👉 Step 9/9\n\n*Explanation:*", parse_mode="Markdown")
+
+    elif step == "explanation":
+        data["explanation"] = text
+        await save_manual_mcq(update, ctx)
+
+
+#----------------save manual mcq-------------
+async def save_manual_mcq(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    d = ctx.user_data["admin_add"]
+
+    cur.execute("""
+        INSERT INTO mcq (exam, topic, question, a, b, c, d, correct, explanation)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        d["exam"], d["topic"], d["question"],
+        d["a"], d["b"], d["c"], d["d"],
+        d["correct"], d["explanation"]
+    ))
+    conn.commit()
+
+    ctx.user_data.clear()
+
+    await update.message.reply_text(
+        "✅ *MCQ Added Successfully!*\n\nYou can add another or go back.",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("✍️ Add Another MCQ", callback_data="admin_add_mcq")],
+            [InlineKeyboardButton("⬅️ Back to Admin", callback_data="admin_panel")]
+        ])
+    )
+#-----------------admin toggle button--------
+async def admin_toggle_test(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    if q.from_user.id not in ADMIN_IDS:
+        return
+
+    cur.execute("""
+        SELECT exam, topic, is_active
+        FROM mcq
+        GROUP BY exam, topic
+        ORDER BY exam
+    """)
+    rows = cur.fetchall()
+
+    kb = []
+    for exam, topic, active in rows:
+        status = "🟢 ON" if active else "🔴 OFF"
+        cb = f"toggle::{exam}::{topic}"
+        kb.append([InlineKeyboardButton(f"{exam} | {topic} — {status}", callback_data=cb)])
+
+    kb.append([InlineKeyboardButton("⬅️ Back", callback_data="admin_panel")])
+
+    await q.message.reply_text(
+        "🚫 *Enable / Disable Tests*\n\nTap to toggle 👇",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
+
+#----------admin toggle button action-------------
+async def admin_toggle_action(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    if q.from_user.id not in ADMIN_IDS:
+        return
+
+    _, exam, topic = q.data.split("::")
+
+    cur.execute(
+        "SELECT is_active FROM mcq WHERE exam=? AND topic=? LIMIT 1",
+        (exam, topic)
+    )
+    current = cur.fetchone()[0]
+
+    new_state = 0 if current == 1 else 1
+
+    cur.execute(
+        "UPDATE mcq SET is_active=? WHERE exam=? AND topic=?",
+        (new_state, exam, topic)
+    )
+    conn.commit()
+
+    status = "Enabled 🟢" if new_state else "Disabled 🔴"
+
+    await q.message.reply_text(
+        f"✅ *{exam} / {topic}* is now *{status}*",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ Back", callback_data="admin_toggle_test")]
+        ])
+    )
+#------broadcast start handler----------
+async def admin_broadcast(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    if q.from_user.id not in ADMIN_IDS:
+        return
+
+    ctx.user_data.clear()
+    ctx.user_data["admin_mode"] = "broadcast"
+
+    await q.message.reply_text(
+        "📢 *Broadcast Mode*\n\n"
+        "अब जो message आप भेजेंगे,\n"
+        "वह सभी users को जाएगा 👇\n\n"
+        "_Cancel करने के लिए /cancel भेजें_",
+        parse_mode="Markdown"
+    )
+#----------Restore Start--------
+async def admin_restore(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    if q.from_user.id not in ADMIN_IDS:
+        return
+
+    ctx.user_data.clear()
+    ctx.user_data["admin_mode"] = "restore_db"
+
+    await q.message.reply_text(
+        "♻️ *Restore Database*\n\n"
+        "अब `.db` backup file upload करें ⚠️\n\n"
+        "❗ Existing data overwrite हो जाएगा",
+        parse_mode="Markdown"
+    )
+#------upload db file------------
+async def admin_restore_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS:
+        return
+
+    if ctx.user_data.get("admin_mode") != "restore_db":
+        return
+
+    doc = update.message.document
+
+    if not doc.file_name.endswith(".db"):
+        await update.message.reply_text("❌ Please upload a valid .db file")
+        return
+
+    file = await doc.get_file()
+    temp_path = tempfile.mktemp(".db")
+    await file.download_to_drive(temp_path)
+
+    # Close current DB
+    conn.close()
+
+    # Replace DB
+    os.replace(temp_path, "mcq.db")
+
+    await update.message.reply_text(
+        "✅ *Database Restored Successfully*\n\n"
+        "🔁 Bot restart करना जरूरी है",
+        parse_mode="Markdown"
+    )
+
+    # IMPORTANT: stop bot safely
+    os._exit(0)
+
+#------------backup handler----------
+async def admin_backup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    if q.from_user.id not in ADMIN_IDS:
+        return
+
+    db_path = "mcq.db"
+    backup_name = f"mcq_backup_{datetime.date.today()}.db"
+
+    await ctx.bot.send_document(
+        chat_id=q.from_user.id,
+        document=open(db_path, "rb"),
+        filename=backup_name,
+        caption="💾 *Database Backup*\nKeep this file safe!",
+        parse_mode="Markdown"
+    )
+
 #--------noop handler--------------
 async def noop(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer("No exams available yet")
@@ -547,6 +1076,14 @@ def main():
     app.add_handler(CallbackQueryHandler(noop, "^noop$"))
 
     #-----------------main excel handle---------
+    app.add_handler(
+
+    MessageHandler(filters.TEXT & filters.User(ADMIN_IDS), admin_add_mcq_text)
+    )
+    app.add_handler(CallbackQueryHandler(admin_backup, "^admin_backup$"))
+    app.add_handler(CallbackQueryHandler(admin_restore, "^admin_restore$"))
+    app.add_handler(MessageHandler(filters.Document.ALL & filters.User(ADMIN_IDS), admin_restore_handler))
+
     app.add_handler(MessageHandler(filters.Document.ALL & filters.User(ADMIN_IDS), handle_excel))
 
     #--------admin panel call back----------
@@ -555,7 +1092,18 @@ def main():
     app.add_handler(CallbackQueryHandler(admin_search, "^admin_search$"))
     app.add_handler(CallbackQueryHandler(admin_mcq_menu, "^admin_mcq_"))
     app.add_handler(CallbackQueryHandler(admin_edit_field, "^edit_"))
+    app.add_handler(CallbackQueryHandler(admin_add_mcq, "^admin_add_mcq$"))
 
+    app.add_handler(CallbackQueryHandler(admin_users, "^admin_users$"))
+    app.add_handler(CallbackQueryHandler(admin_user_history, "^admin_user_"))
+    app.add_handler(CallbackQueryHandler(admin_duplicates, "^admin_duplicates$"))
+
+    app.add_handler(CallbackQueryHandler(admin_toggle_test, "^admin_toggle_test$"))
+    app.add_handler(CallbackQueryHandler(admin_toggle_action, "^toggle::"))
+
+    
+
+    app.add_handler(CallbackQueryHandler(admin_broadcast, "^admin_broadcast$"))
     app.add_handler(MessageHandler(filters.TEXT & filters.User(ADMIN_IDS), admin_text_router))
 
 
@@ -603,7 +1151,6 @@ def main():
 
 if __name__=="__main__":
     main()
-
 
 
 
