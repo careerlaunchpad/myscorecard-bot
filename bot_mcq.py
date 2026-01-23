@@ -409,11 +409,28 @@ async def profile(update, ctx):
 
 # ================= DONATE =================
 async def donate(update, ctx):
-    q=update.callback_query; await q.answer()
+    q = update.callback_query
+    await q.answer()
+
+    text = (
+        "❤️ *Support This Free Learning Bot*\n\n"
+        "यह MCQ Bot सभी students के लिए हमेशा *FREE* रहेगा 📚\n"
+        "आपका छोटा-सा contribution हमें help करता है:\n\n"
+        "• Server & hosting cost\n"
+        "• New exams & features add करने में\n"
+        "• Bot को fast & reliable रखने में\n\n"
+        "🙏 *Donate only if you truly find this useful.*\n\n"
+        f"💳 *UPI ID:*\n`{UPI_ID}`\n\n"
+        "_Thank you for supporting free education 💙_"
+    )
+
     await safe_edit_or_send(
         q,
-        f"🙏 *Support this free bot*\n\n`{UPI_ID}`",
-        InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="start_new")]])
+        text,
+        InlineKeyboardMarkup([
+            [InlineKeyboardButton("📋 Copy UPI ID", callback_data="copy_upi")],
+            [InlineKeyboardButton("⬅️ Back", callback_data="start_new")]
+        ])
     )
 
 # ================= PDF =================
@@ -1513,6 +1530,7 @@ def main():
 
 if __name__=="__main__":
     main()
+
 
 
 
