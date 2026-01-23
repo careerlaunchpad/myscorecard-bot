@@ -432,6 +432,8 @@ async def donate(update, ctx):
             [InlineKeyboardButton("⬅️ Back", callback_data="start_new")]
         ])
     )
+async def copy_upi(update, ctx):
+    await update.callback_query.answer("UPI ID copied 👍")
 
 # ================= PDF =================
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
@@ -1505,6 +1507,8 @@ def main():
 # ---- TOP LEVEL BUTTONS (FIRST) ----
     app.add_handler(CallbackQueryHandler(admin_panel, "^admin_panel$"))
     app.add_handler(CallbackQueryHandler(donate, "^donate$"))
+    app.add_handler(CallbackQueryHandler(copy_upi, "^copy_upi$"))
+
     app.add_handler(CallbackQueryHandler(profile, "^profile$"))
 
 # ---- NAVIGATION ----
@@ -1530,6 +1534,7 @@ def main():
 
 if __name__=="__main__":
     main()
+
 
 
 
