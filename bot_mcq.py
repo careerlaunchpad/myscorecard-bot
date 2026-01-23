@@ -63,6 +63,11 @@ conn.commit()
 def is_admin(uid): return uid in ADMIN_IDS
 def safe_hindi(t): return unicodedata.normalize("NFKC", str(t)) if t else ""
 
+def normalize_question(q):
+    return " ".join(q.lower().split())
+
+
+
 def display_name(u):
     if u.username:
         return f"@{u.username}"
@@ -74,6 +79,20 @@ async def safe_edit_or_send(q, text, kb=None):
         await q.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
     except BadRequest:
         await q.message.reply_text(text, reply_markup=kb, parse_mode="Markdown")
+
+def get_mcq_by_id(mcq_id):
+    cur.execute("SELECT * FROM mcq WHERE id=?", (mcq_id,))
+    return cur.fetchone()
+
+def is_duplicate_mcq(exam, topic, question):
+    nq = normalize_question(question)
+
+    cur.execute("""
+        SELECT COUNT(*) FROM mcq
+        WHERE exam=? AND topic=? AND lower(question)=?
+    """, (exam, topic, nq))
+
+    return cur.fetchone()[0] > 0
 
 #-----------admin analytics-------------------------
 def get_admin_analytics():
@@ -476,6 +495,29 @@ async def admin_panel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("⬅️ Back", callback_data="start_new")]
         ])
     )
+#---------force add ----------
+async def force_add(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS:
+        return
+
+    d = ctx.user_data.get("force_mcq")
+    if not d:
+        await update.message.reply_text("❌ No MCQ pending for force add")
+        return
+
+    cur.execute("""
+        INSERT INTO mcq (exam, topic, question, a, b, c, d, correct, explanation)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        d["exam"], d["topic"], d["question"],
+        d["a"], d["b"], d["c"], d["d"],
+        d["correct"], d["explanation"]
+    ))
+    conn.commit()
+
+    ctx.user_data.clear()
+    await update.message.reply_text("✅ Duplicate MCQ force-added successfully")
+
 #------------admin upload file------------------------
 async def admin_upload(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -489,30 +531,82 @@ async def admin_upload(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 #-------------excel handle-----------------------
 async def handle_excel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
+    # 🔐 Admin only
+    if update.effective_user.id not in ADMIN_IDS:
         return
+
     if not ctx.user_data.get("awaiting_excel"):
         return
 
     ctx.user_data["awaiting_excel"] = False
-    file = await update.message.document.get_file()
-    path = tempfile.mktemp(".xlsx")
+
+    doc = update.message.document
+    if not doc.file_name.endswith((".xlsx", ".xls")):
+        await update.message.reply_text("❌ Please upload a valid Excel file (.xlsx)")
+        return
+
+    file = await doc.get_file()
+    path = tempfile.mktemp(suffix=".xlsx")
     await file.download_to_drive(path)
 
-    df = pd.read_excel(path)
+    try:
+        df = pd.read_excel(path)
+    except Exception as e:
+        await update.message.reply_text(f"❌ Excel read error:\n{e}")
+        return
+
+    required_cols = {"exam","topic","question","a","b","c","d","correct","explanation"}
+    if not required_cols.issubset(df.columns):
+        await update.message.reply_text(
+            "❌ Invalid Excel format\n\nRequired columns:\n"
+            "exam, topic, question, a, b, c, d, correct, explanation"
+        )
+        return
+
+    added = 0
+    skipped = 0
 
     for _, r in df.iterrows():
-        cur.execute(
-            "INSERT INTO mcq VALUES(NULL,?,?,?,?,?,?,?,?,?)",
-            (r.exam, r.topic, r.question, r.a, r.b, r.c, r.d, r.correct, r.explanation)
-        )
+        if is_duplicate_mcq(r.exam, r.topic, r.question):
+            skipped += 1
+            continue
+
+        cur.execute("""
+            INSERT INTO mcq (
+                exam, topic, question,
+                a, b, c, d,
+                correct, explanation,
+                is_active
+            )
+
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+
+        """, (
+            str(r.exam).strip(),
+            str(r.topic).strip(),
+            str(r.question).strip(),
+            str(r.a).strip(),
+            str(r.b).strip(),
+            str(r.c).strip(),
+            str(r.d).strip(),
+            str(r.correct).strip().upper(),
+            str(r.explanation).strip()
+        ))
+
+        added += 1
 
     conn.commit()
 
     await update.message.reply_text(
-        f"✅ {len(df)} MCQs uploaded successfully",
-        reply_markup=home_kb()
+        f"✅ *Excel Upload Complete*\n\n"
+        f"➕ Added: {added}\n"
+        f"⏭ Skipped (Duplicates): {skipped}",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ Back to Admin", callback_data="admin_panel")]
+        ])
     )
+
 #-----------admin export ------------------
 async def admin_export(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -533,54 +627,77 @@ async def admin_search(update, ctx):
     ctx.user_data["admin_mode"] = "search"
 
     await safe_edit_or_send(
+
         q,
-        "🔍 *Send keyword to search MCQ*",
+        "🔍 *Search MCQ*\n\n"
+        "Type any keyword from:\n"
+        "• Question text\n"
+        "• Options (A/B/C/D)\n\n"
+        "_Example:_ constitution / GDP / Article",
         InlineKeyboardMarkup([
             [InlineKeyboardButton("⬅️ Back", callback_data="admin_panel")]
         ])
     )
+
 #---------------------Admin text router (SEARCH + EDIT SAVE)------------
 async def admin_text_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
         return
 
-    # ❌ cancel broadcast
-    if update.message.text == "/cancel":
+    text = update.message.text.strip()
+
+    # ❌ CANCEL ANY ADMIN MODE
+    if text == "/cancel":
         ctx.user_data.clear()
-        await update.message.reply_text("❌ Broadcast cancelled")
+        await update.message.reply_text("❌ Admin operation cancelled")
         return
 
-    # 📢 BROADCAST MODE
-    if ctx.user_data.get("admin_mode") == "broadcast":
-        msg = update.message.text
+    mode = ctx.user_data.get("admin_mode")
 
+    # ===============================
+    # 📢 BROADCAST MODE
+    # ===============================
+    if mode == "broadcast":
         cur.execute("SELECT user_id FROM users")
         users = cur.fetchall()
 
-        sent = 0
-        failed = 0
-
+        sent = failed = 0
         for (uid,) in users:
             try:
-                await ctx.bot.send_message(uid, msg)
+                await ctx.bot.send_message(uid, text)
                 sent += 1
             except:
                 failed += 1
 
         ctx.user_data.clear()
-
         await update.message.reply_text(
-            f"✅ *Broadcast Completed*\n\n"
-            f"📨 Sent: {sent}\n"
-            f"❌ Failed: {failed}",
-            parse_mode="Markdown"
+            f"✅ Broadcast Completed\n\n📨 Sent: {sent}\n❌ Failed: {failed}"
         )
+        return
 
+    # ===============================
+    # ✍️ MANUAL MCQ ADD MODE
+    # ===============================
+    if update.message.text.lower() == "/cancel":
 
-    # SEARCH MODE
-    if ctx.user_data.get("admin_mode") == "search":
-        kw = update.message.text.strip()
+        ctx.user_data.clear()
+        await update.message.reply_text(
+            "❌ Manual MCQ add cancelled",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Back to Admin", callback_data="admin_panel")]
+            ])
+        )
+        return
 
+    if ctx.user_data.get("admin_add"):
+        await admin_add_mcq_text(update, ctx)
+        return
+
+    # ===============================
+    # 🔍 SEARCH MODE
+    # ===============================
+    if mode == "search":
+        kw = text
         cur.execute(
             "SELECT id, question FROM mcq WHERE question LIKE ? LIMIT 20",
             (f"%{kw}%",)
@@ -591,8 +708,11 @@ async def admin_text_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ No MCQ found")
             return
 
-        kb = [
-            [InlineKeyboardButton(r[1][:40] + "…", callback_data=f"admin_mcq_{r[0]}")]
+        kb = [[InlineKeyboardButton(
+                f"❓ MCQ {r[0]}: {r[1][:35]}…",
+                callback_data=f"admin_mcq_{r[0]}"
+            )
+            ]
             for r in rows
         ]
         kb.append([InlineKeyboardButton("⬅️ Back", callback_data="admin_panel")])
@@ -601,21 +721,113 @@ async def admin_text_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "📋 Select MCQ to Edit",
             reply_markup=InlineKeyboardMarkup(kb)
         )
+        return
 
-    # EDIT MODE
-    elif ctx.user_data.get("admin_mode") == "edit_field":
-        field = ctx.user_data["field"]
+   
+
+# ✏️ EDIT FIELD SAVE MODE (AUTO REFRESH)
+# ===============================
+    if ctx.user_data.get("admin_mode") == "edit_text":
+        field = ctx.user_data["edit_field"]
         mcq_id = ctx.user_data["edit_id"]
+        value = update.message.text.strip()
 
         cur.execute(
             f"UPDATE mcq SET {field}=? WHERE id=?",
-            (update.message.text, mcq_id)
+            (value, mcq_id)
         )
         conn.commit()
 
-        ctx.user_data.clear()
-        await update.message.reply_text("✅ MCQ Updated Successfully")
+    # ❗ clear only edit flags
+        ctx.user_data.pop("admin_mode", None)
+        ctx.user_data.pop("edit_field", None)
 
+        await update.message.reply_text(
+            "✅ *MCQ Updated Successfully*",
+            parse_mode="Markdown"
+        )
+
+    # 🔁 AUTO REFRESH EDIT MENU (STEP-5.7)
+        fake_update = Update(
+            update.update_id,
+            callback_query=type(
+                "obj",
+                (),
+                {
+                    "data": f"admin_mcq_{mcq_id}",
+                    "message": update.message,
+                    "answer": lambda *a, **k: None
+                }
+            )
+        )
+
+        await admin_mcq_menu(fake_update, ctx)
+        return
+
+
+    elif ctx.user_data.get("admin_mode") == "edit_field":
+
+        field = ctx.user_data["field"]
+        mcq_id = ctx.user_data["edit_id"]
+        value = update.message.text.strip()
+
+    if field == "correct":
+        value = value.upper()
+        if value not in ["A", "B", "C", "D"]:
+            await update.message.reply_text(
+                "❌ Invalid correct option\nSend only: A / B / C / D"
+            )
+            return
+
+    cur.execute(
+        f"UPDATE mcq SET {field}=? WHERE id=?",
+        (value, mcq_id)
+    )
+    conn.commit()
+
+    ctx.user_data.clear()
+
+    await update.message.reply_text(
+        "✅ *MCQ Updated Successfully*",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ Back to Admin", callback_data="admin_panel")]
+        ])
+    )
+
+# ===== ADMIN: SET CORRECT ANSWER =====
+async def admin_set_correct(update, ctx):
+    q = update.callback_query
+    await q.answer()
+
+    if ctx.user_data.get("admin_mode") != "set_correct":
+        await q.message.reply_text("⚠️ Invalid state")
+        return
+
+    mcq_id = ctx.user_data.get("edit_id")
+    correct = q.data[-1]   # A / B / C / D
+
+    cur.execute(
+        "UPDATE mcq SET correct=? WHERE id=?",
+        (correct, mcq_id)
+    )
+    conn.commit()
+
+    ctx.user_data.clear()
+
+    await q.message.reply_text(
+        f"✅ *Correct Answer Updated:* `{correct}`",
+        parse_mode="Markdown"
+    )
+
+    # 🔁 AUTO REFRESH EDIT MENU (SAFE)
+    fake_update = Update(
+        update.update_id,
+        callback_query=update.callback_query
+    )
+    fake_update.callback_query.data = f"admin_mcq_{mcq_id}"
+
+    await admin_mcq_menu(fake_update, ctx)
 
 #------MCQ Edit Menu-------------
 async def admin_mcq_menu(update, ctx):
@@ -630,7 +842,9 @@ async def admin_mcq_menu(update, ctx):
 
     await safe_edit_or_send(
         q,
-        f"*Edit MCQ*\n\n{m[3]}",
+        f"✏️ *Edit MCQ*\n\n"
+        f"*MCQ ID:* {m[0]}\n\n"
+        f"❓ {m[3][:200]}",
         InlineKeyboardMarkup([
             [InlineKeyboardButton("✏ Question", callback_data="edit_question")],
             [InlineKeyboardButton("🅰 A", callback_data="edit_a"),
@@ -646,10 +860,48 @@ async def admin_edit_field(update, ctx):
     q = update.callback_query
     await q.answer()
 
-    ctx.user_data["admin_mode"] = "edit_field"
-    ctx.user_data["field"] = q.data.replace("edit_", "")
+    field = q.data.replace("edit_", "")
+    mcq_id = ctx.user_data.get("edit_id")
 
-    await q.message.reply_text("✏️ Send new value")
+    m = get_mcq_by_id(mcq_id)
+    if not m:
+        await q.message.reply_text("❌ MCQ not found")
+        return
+
+    field_map = {
+        "question": ("Question", m[3]),
+        "a": ("Option A", m[4]),
+        "b": ("Option B", m[5]),
+        "c": ("Option C", m[6]),
+        "d": ("Option D", m[7]),
+    }
+
+    # 🔴 Correct answer handled separately
+    if field == "correct":
+        await q.message.reply_text(
+            "✔ Select Correct Answer",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("A", callback_data="set_correct_A"),
+                 InlineKeyboardButton("B", callback_data="set_correct_B")],
+                [InlineKeyboardButton("C", callback_data="set_correct_C"),
+                 InlineKeyboardButton("D", callback_data="set_correct_D")],
+            ])
+        )
+        ctx.user_data["admin_mode"] = "set_correct"
+        return
+
+    label, old_value = field_map[field]
+
+    ctx.user_data["admin_mode"] = "edit_text"
+    ctx.user_data["edit_field"] = field
+
+    await q.message.reply_text(
+        f"✏️ *Edit {label}*\n\n"
+        f"*OLD:*\n{old_value}\n\n"
+        f"अब नया value भेजें 👇",
+        parse_mode="Markdown"
+    )
+
 
 #--------admin user control------------------
 async def admin_users(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -827,6 +1079,17 @@ async def admin_add_mcq(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 #-------admin add mcq text---------------------
 async def admin_add_mcq_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    # ❌ CANCEL MANUAL MCQ ADD
+    if update.message.text.lower() == "/cancel":
+        ctx.user_data.clear()
+        await update.message.reply_text(
+            "❌ Manual MCQ add cancelled",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Back to Admin", callback_data="admin_panel")]
+            ])
+        )
+        return
+
     if update.effective_user.id not in ADMIN_IDS:
         return
 
@@ -874,23 +1137,123 @@ async def admin_add_mcq_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "👉 Step 8/9\n\n*Correct Option?*\nSend one letter: A / B / C / D",
             parse_mode="Markdown"
         )
-
     elif step == "correct":
+
+        ans = text.upper().strip()
+        if ans not in ["A", "B", "C", "D"]:
+            await update.message.reply_text(
+                "❌ Invalid input\nSend only: A / B / C / D"
+                )
+            return
+
+        data["correct"] = ans
+        data["step"] = "explanation"
+
+        await update.message.reply_text(
+            "👉 Step 9/9\n\n*Explanation:*",
+            parse_mode="Markdown"
+        )
+
+    elif step == "explanation":
+        data["explanation"] = text
+
+        d = data  # short reference
+
+        preview = f"""
+    📘 *Preview MCQ*
+
+    *Exam:* {d['exam']}
+    *Topic:* {d['topic']}
+
+    ❓ {d['question']}
+
+    A. {d['a']}
+    B. {d['b']}
+    C. {d['c']}
+    D. {d['d']}
+
+    ✔ Correct: *{d['correct']}*
+
+    📘 Explanation:
+    {d['explanation']}
+    """
+
+        await update.message.reply_text(
+            preview,
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Save MCQ", callback_data="admin_confirm_save")],
+                [InlineKeyboardButton("❌ Cancel", callback_data="admin_cancel_save")]
+            ])
+        )
+
+    """elif step == "correct":
         if text.upper() not in ["A", "B", "C", "D"]:
             await update.message.reply_text("❌ Please send only A / B / C / D")
             return
         data["correct"] = text.upper()
         data["step"] = "explanation"
         await update.message.reply_text("👉 Step 9/9\n\n*Explanation:*", parse_mode="Markdown")
+    """
+    
 
-    elif step == "explanation":
-        data["explanation"] = text
-        await save_manual_mcq(update, ctx)
+#---save and cancel handler-------
+async def confirm_save_mcq(update, ctx):
+    q = update.callback_query; await q.answer()
 
+    d = ctx.user_data.get("admin_add")
+    if not d:
+        return
+
+    cur.execute("""
+        INSERT INTO mcq (exam, topic, question, a, b, c, d, correct, explanation)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        d["exam"], d["topic"], d["question"],
+        d["a"], d["b"], d["c"], d["d"],
+        d["correct"], d["explanation"]
+    ))
+    conn.commit()
+
+    ctx.user_data.clear()
+
+    await q.message.reply_text(
+        "✅ MCQ Saved Successfully",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("➕ Add Another MCQ", callback_data="admin_add_mcq")],
+            [InlineKeyboardButton("⬅️ Back to Admin", callback_data="admin_panel")]
+        ])
+    )
+#------cancel handler--------
+async def cancel_save_mcq(update, ctx):
+    q = update.callback_query; await q.answer()
+    ctx.user_data.clear()
+
+    await q.message.reply_text(
+        "❌ MCQ not saved",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ Back to Admin", callback_data="admin_panel")]
+        ])
+    )
 
 #----------------save manual mcq-------------
 async def save_manual_mcq(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     d = ctx.user_data["admin_add"]
+        # 🚨 DUPLICATE CHECK
+    if is_duplicate_mcq(
+        d["exam"], d["topic"], d["question"]
+    ):
+        
+        await update.message.reply_text(
+        "⚠️ *Duplicate MCQ Detected!*\n\n"
+        "Same question already exists.\n\n"
+        "अगर फिर भी add करना है तो /force_add भेजें",
+        parse_mode="Markdown"
+        )
+        ctx.user_data["force_mcq"] = d
+        ctx.user_data.pop("admin_add", None)
+        return
+
 
     cur.execute("""
         INSERT INTO mcq (exam, topic, question, a, b, c, d, correct, explanation)
@@ -1019,19 +1382,26 @@ async def admin_restore_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     doc = update.message.document
-
     if not doc.file_name.endswith(".db"):
         await update.message.reply_text("❌ Please upload a valid .db file")
         return
 
     file = await doc.get_file()
-    temp_path = tempfile.mktemp(".db")
+
+    fd, temp_path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
     await file.download_to_drive(temp_path)
 
-    # Close current DB
-    conn.close()
+    try:
+        conn.close()
+    except:
+        pass
 
-    # Replace DB
+    backup = f"mcq_backup_before_restore_{datetime.date.today()}.db"
+
+    if os.path.exists("mcq.db"):
+        os.replace("mcq.db", backup)
+
     os.replace(temp_path, "mcq.db")
 
     await update.message.reply_text(
@@ -1040,7 +1410,6 @@ async def admin_restore_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-    # IMPORTANT: stop bot safely
     os._exit(0)
 
 #------------backup handler----------
@@ -1076,15 +1445,19 @@ def main():
     app.add_handler(CallbackQueryHandler(noop, "^noop$"))
 
     #-----------------main excel handle---------
-    app.add_handler(
-
-    MessageHandler(filters.TEXT & filters.User(ADMIN_IDS), admin_add_mcq_text)
-    )
+    
     app.add_handler(CallbackQueryHandler(admin_backup, "^admin_backup$"))
     app.add_handler(CallbackQueryHandler(admin_restore, "^admin_restore$"))
+    
+    # ✅ Excel upload FIRST
+    app.add_handler(MessageHandler(filters.Document.ALL & filters.User(ADMIN_IDS), handle_excel))
+
+    # ✅ Restore DB AFTER
     app.add_handler(MessageHandler(filters.Document.ALL & filters.User(ADMIN_IDS), admin_restore_handler))
 
-    app.add_handler(MessageHandler(filters.Document.ALL & filters.User(ADMIN_IDS), handle_excel))
+    #app.add_handler(MessageHandler(filters.Document.ALL & filters.User(ADMIN_IDS), admin_restore_handler))
+
+    #app.add_handler(MessageHandler(filters.Document.ALL & filters.User(ADMIN_IDS), handle_excel))
 
     #--------admin panel call back----------
     app.add_handler(CallbackQueryHandler(admin_export, "^admin_export$"))
@@ -1093,6 +1466,12 @@ def main():
     app.add_handler(CallbackQueryHandler(admin_mcq_menu, "^admin_mcq_"))
     app.add_handler(CallbackQueryHandler(admin_edit_field, "^edit_"))
     app.add_handler(CallbackQueryHandler(admin_add_mcq, "^admin_add_mcq$"))
+    app.add_handler(CommandHandler("force_add", force_add))
+
+    app.add_handler(CallbackQueryHandler(confirm_save_mcq, "^admin_confirm_save$"))
+    app.add_handler(CallbackQueryHandler(cancel_save_mcq, "^admin_cancel_save$"))
+
+
 
     app.add_handler(CallbackQueryHandler(admin_users, "^admin_users$"))
     app.add_handler(CallbackQueryHandler(admin_user_history, "^admin_user_"))
@@ -1100,8 +1479,7 @@ def main():
 
     app.add_handler(CallbackQueryHandler(admin_toggle_test, "^admin_toggle_test$"))
     app.add_handler(CallbackQueryHandler(admin_toggle_action, "^toggle::"))
-
-    
+    app.add_handler(CallbackQueryHandler(admin_set_correct, "^set_correct_"))
 
     app.add_handler(CallbackQueryHandler(admin_broadcast, "^admin_broadcast$"))
     app.add_handler(MessageHandler(filters.TEXT & filters.User(ADMIN_IDS), admin_text_router))
@@ -1129,28 +1507,13 @@ def main():
     app.add_handler(CallbackQueryHandler(leaderboard, "^leaderboard$"))
     app.add_handler(CallbackQueryHandler(pdf_result, "^pdf_result$"))
 
-    """
-    app=ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start",start))
-    app.add_handler(CallbackQueryHandler(start_new,"^start_new$"))
-    app.add_handler(CallbackQueryHandler(exam_select,"^exam_"))
-    app.add_handler(CallbackQueryHandler(topic_select,"^topic_"))
-    app.add_handler(CallbackQueryHandler(answer,"^ans_"))
-    app.add_handler(CallbackQueryHandler(review_all,"^review_all$"))
-    app.add_handler(CallbackQueryHandler(wrong_only,"^wrong_only$"))
-    app.add_handler(CallbackQueryHandler(wrong_next,"^wrong_next$"))
-    app.add_handler(CallbackQueryHandler(wrong_prev,"^wrong_prev$"))
-    app.add_handler(CallbackQueryHandler(back_result,"^back_result$"))
-    app.add_handler(CallbackQueryHandler(leaderboard,"^leaderboard$"))
-    app.add_handler(CallbackQueryHandler(pdf_result,"^pdf_result$"))
-    app.add_handler(CallbackQueryHandler(profile,"^profile$"))
-    app.add_handler(CallbackQueryHandler(donate,"^donate$"))"""
     
     print("🤖 Bot Running...")
     app.run_polling()
 
 if __name__=="__main__":
     main()
+
 
 
 
