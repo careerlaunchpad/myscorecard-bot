@@ -212,6 +212,67 @@ async def exam_select(update, ctx):
     ctx.user_data["exam"] = q.data.replace("exam_", "")
     await safe_edit_or_send(q, "📚 Choose Topic", topic_kb(ctx.user_data["exam"]))
 
+async def show_question(q, ctx):
+    # 🛡️ SESSION SAFETY
+    if not ctx.user_data.get("questions"):
+        await safe_edit_or_send(
+            q,
+            "⚠️ *Test session expired*",
+            home_kb()
+        )
+        return
+
+    idx = ctx.user_data["q_index"]
+    questions = ctx.user_data["questions"]
+    total = len(questions)
+
+    # 🛡️ INDEX SAFETY
+    if idx < 0:
+        idx = 0
+    if idx >= total:
+        idx = total - 1
+
+    ctx.user_data["q_index"] = idx
+    m = questions[idx]   # current MCQ row
+
+    selected = ctx.user_data["answers"].get(m[0])
+
+    text = (
+        f"❓ *Question {idx+1} / {total}*\n\n"
+        f"{m[3]}\n\n"
+        f"A. {m[4]}\n"
+        f"B. {m[5]}\n"
+        f"C. {m[6]}\n"
+        f"D. {m[7]}"
+    )
+
+    kb = [
+        [
+            InlineKeyboardButton("A", callback_data="ans_A"),
+            InlineKeyboardButton("B", callback_data="ans_B")
+        ],
+        [
+            InlineKeyboardButton("C", callback_data="ans_C"),
+            InlineKeyboardButton("D", callback_data="ans_D")
+        ]
+    ]
+
+    nav = []
+    if idx > 0:
+        nav.append(InlineKeyboardButton("⬅️ Previous", callback_data="prev_q"))
+    if idx < total - 1:
+        nav.append(InlineKeyboardButton("➡️ Next", callback_data="next_q"))
+
+    if nav:
+        kb.append(nav)
+
+    kb.append([
+        InlineKeyboardButton("✅ Submit Test", callback_data="finish_test"),
+        InlineKeyboardButton("🏠 Home", callback_data="start_new")
+    ])
+
+    await safe_edit_or_send(q, text, InlineKeyboardMarkup(kb))
+
 async def topic_select(update, ctx):
     q = update.callback_query
     await q.answer()
@@ -1639,6 +1700,7 @@ def main():
 
 if __name__=="__main__":
     main()
+
 
 
 
