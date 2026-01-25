@@ -1652,6 +1652,11 @@ def main():
     app.add_handler(CallbackQueryHandler(confirm_save_mcq, "^admin_confirm_save$"))
     app.add_handler(CallbackQueryHandler(cancel_save_mcq, "^admin_cancel_save$"))
 
+#--------user test control handler-------------
+    app.add_handler(CallbackQueryHandler(answer, "^ans_"))
+    app.add_handler(CallbackQueryHandler(next_q, "^next_q$"))
+    app.add_handler(CallbackQueryHandler(prev_q, "^prev_q$"))
+    app.add_handler(CallbackQueryHandler(finish_test, "^finish_test$"))
 
 
     app.add_handler(CallbackQueryHandler(admin_users, "^admin_users$"))
@@ -1700,6 +1705,7 @@ def main():
 
 if __name__=="__main__":
     main()
+
 
 
 
