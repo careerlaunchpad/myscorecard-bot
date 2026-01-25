@@ -286,17 +286,19 @@ async def show_result(q, ctx):
 
 # ================= REVIEW =================
 async def review_all(update, ctx):
-    q = update.callback_query; await q.answer()
-    text = "📋 *Review*\n\n"
-    for i,a in enumerate(ctx.user_data.get("attempts", []),1):
-        text += f"*Q{i}.* {a['question']}\nYour: {a['chosen']}\nCorrect: {a['correct']}\n📘 {a['explanation']}\n\n"
-    await safe_edit_or_send(
-        q, text,
-        InlineKeyboardMarkup([
-            [InlineKeyboardButton("⬅️ Back", callback_data="back_result")],
-            [InlineKeyboardButton("🏠 Home", callback_data="start_new")]
-        ])
-    )
+    q = update.callback_query
+    await q.answer()
+
+    attempts = ctx.user_data.get("attempts", [])
+    if not attempts:
+        await safe_edit_or_send(q, "⚠️ No review data", home_kb())
+        return
+
+    ctx.user_data["review_index"] = 0
+    ctx.user_data["review_mode"] = "all"
+
+    await show_review_page(q, ctx)
+
 
 # ================= WRONG =================
 async def wrong_only(update, ctx):
@@ -1449,6 +1451,60 @@ async def admin_backup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         caption="💾 *Database Backup*\nKeep this file safe!",
         parse_mode="Markdown"
     )
+#------- review page render-----------------
+
+REVIEW_PAGE_SIZE = 5   # 🔒 safe for Telegram
+async def show_review_page(q, ctx):
+    idx = ctx.user_data["review_index"]
+    attempts = ctx.user_data["attempts"]
+
+    start = idx * REVIEW_PAGE_SIZE
+    end = start + REVIEW_PAGE_SIZE
+    page = attempts[start:end]
+
+    total_pages = (len(attempts) - 1) // REVIEW_PAGE_SIZE + 1
+
+    text = f"📋 *Review All* (Page {idx+1}/{total_pages})\n\n"
+
+    for i, a in enumerate(page, start + 1):
+        text += (
+            f"*Q{i}.* {a['question']}\n"
+            f"Your: {a['chosen']}\n"
+            f"Correct: {a['correct']}\n"
+            f"📘 {a['explanation']}\n\n"
+        )
+
+    kb = []
+
+    nav = []
+    if idx > 0:
+        nav.append(InlineKeyboardButton("⬅️ Prev", callback_data="review_prev"))
+    if end < len(attempts):
+        nav.append(InlineKeyboardButton("➡️ Next", callback_data="review_next"))
+
+    if nav:
+        kb.append(nav)
+
+    kb.append([
+        InlineKeyboardButton("⬅️ Back", callback_data="back_result"),
+        InlineKeyboardButton("🏠 Home", callback_data="start_new")
+    ])
+
+    await safe_edit_or_send(q, text, InlineKeyboardMarkup(kb))
+
+#-----Review page next or preview handler---------
+async def review_next(update, ctx):
+    q = update.callback_query
+    await q.answer()
+    ctx.user_data["review_index"] += 1
+    await show_review_page(q, ctx)
+
+async def review_prev(update, ctx):
+    q = update.callback_query
+    await q.answer()
+    ctx.user_data["review_index"] -= 1
+    await show_review_page(q, ctx)
+
 
 #--------noop handler--------------
 async def noop(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -1528,12 +1584,17 @@ def main():
     app.add_handler(CallbackQueryHandler(leaderboard, "^leaderboard$"))
     app.add_handler(CallbackQueryHandler(pdf_result, "^pdf_result$"))
 
+    #review flow--------------
+    app.add_handler(CallbackQueryHandler(review_next, "^review_next$"))
+    app.add_handler(CallbackQueryHandler(review_prev, "^review_prev$"))
+
     
     print("🤖 Bot Running...")
     app.run_polling()
 
 if __name__=="__main__":
     main()
+
 
 
 
