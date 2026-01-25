@@ -149,7 +149,18 @@ def home_kb():
 
 #------exam button----------
 def exam_kb():
-    cur.execute("SELECT DISTINCT exam FROM mcq WHERE is_active=1")
+    cur.execute("""
+    SELECT DISTINCT exam
+    FROM mcq
+    WHERE exam IN (
+        SELECT exam
+        FROM mcq
+        WHERE is_active=1
+        GROUP BY exam, topic
+    )
+""")
+
+
     exams = [r[0] for r in cur.fetchall()]
 
     kb = [
@@ -168,7 +179,12 @@ def exam_kb():
 
 
 def topic_kb(exam):
-    cur.execute("SELECT DISTINCT topic FROM mcq WHERE exam=?", (exam,))
+    cur.execute("""
+    SELECT DISTINCT topic
+    FROM mcq
+    WHERE exam=? AND is_active=1
+""", (exam,))
+
     kb = [[InlineKeyboardButton(t[0], callback_data=f"topic_{t[0]}")] for t in cur.fetchall()]
     kb.append([InlineKeyboardButton("⬅️ Back", callback_data="start_new")])
     return InlineKeyboardMarkup(kb)
@@ -197,19 +213,48 @@ async def exam_select(update, ctx):
     await safe_edit_or_send(q, "📚 Choose Topic", topic_kb(ctx.user_data["exam"]))
 
 async def topic_select(update, ctx):
-    q = update.callback_query; await q.answer()
-    exam = ctx.user_data["exam"]
+    q = update.callback_query
+    await q.answer()
+
+    exam = ctx.user_data.get("exam")
     topic = q.data.replace("topic_", "")
-    cur.execute("SELECT COUNT(*) FROM mcq WHERE exam=? AND topic=? AND is_active=1", (exam, topic))
-    total = cur.fetchone()[0]
-    if total == 0:
-        await safe_edit_or_send(q, "⚠️ No questions found", home_kb()); return
+
+    # 🔐 SAFETY: exam missing
+    if not exam:
+        await safe_edit_or_send(q, "⚠️ Session expired", home_kb())
+        return
+
+    # ✅ STEP-4.4 — ACTIVE QUESTIONS FETCH
+    cur.execute("""
+        SELECT * FROM mcq
+        WHERE exam=? AND topic=? AND is_active=1
+        ORDER BY RANDOM()
+    """, (exam, topic))
+
+    questions = cur.fetchall()
+
+    # 🚫 TEST DISABLED OR EMPTY
+    if not questions:
+        await safe_edit_or_send(
+            q,
+            "⛔ *This test is currently disabled by Admin*",
+            home_kb()
+        )
+        return
+
+    # ✅ INIT TEST SESSION
+    ctx.user_data.clear()
     ctx.user_data.update({
-        "exam": exam, "topic": topic,
-        "score": 0, "q_no": 0,
-        "asked": [], "wrong": [], "attempts": []
+        "exam": exam,
+        "topic": topic,
+        "questions": questions,
+        "total": len(questions),
+        "q_index": 0,
+        "answers": {}
     })
-    await send_mcq(q, ctx)
+
+    await show_question(q, ctx)
+
 
 # ================= MCQ =================
 async def send_mcq(q, ctx):
@@ -1594,6 +1639,7 @@ def main():
 
 if __name__=="__main__":
     main()
+
 
 
 
