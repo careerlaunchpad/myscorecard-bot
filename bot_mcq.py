@@ -32,7 +32,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 
 # ================= CONFIG =================
-#TOKEN = os.getenv("BOT_TOKEN") or "PUT_YOUR_BOT_TOKEN_HERE"
+TOKEN = os.getenv("BOT_TOKEN") or "PUT_YOUR_BOT_TOKEN_HERE"
 
 UPI_ID = "8085692143@ybl"
 
@@ -1869,3 +1869,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
