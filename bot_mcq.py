@@ -294,7 +294,8 @@ async def topic_select(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "total": len(questions),
         "q_index": 0,
         "answers": {},          # mcq_id -> A/B/C/D
-        "started_at": datetime.datetime.utcnow().isoformat()
+       # "started_at": datetime.datetime.utcnow().isoformat()
+        "started_at": datetime.datetime.now(datetime.UTC).isoformat()
     })
 
     await show_question(q, ctx)
@@ -1870,6 +1871,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
