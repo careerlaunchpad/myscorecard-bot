@@ -87,7 +87,7 @@ CREATE TABLE IF NOT EXISTS scores(
 conn.commit()
 
 # ================= PDF FONT (UNICODE SAFE) =================
-pdfmetrics.registerFont(UnicodeCIDFont("NotoSansDevanagari-Regular"))
+pdfmetrics.registerFont(UnicodeCIDFont("NotoSansDevanagari-Regular.ttf"))
 
 # ================= CORE HELPERS =================
 
@@ -496,6 +496,7 @@ async def finish_test(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("📋 Review All", callback_data="review_all")],
             [InlineKeyboardButton("❌ Wrong Only", callback_data="review_wrong")],
             [InlineKeyboardButton("📄 Download PDF", callback_data="pdf_result")],
+            [InlineKeyboardButton("🏆 Leaderboard", callback_data="leaderboard")],
             [InlineKeyboardButton("🏠 Home", callback_data="home")]
         ])
     )
@@ -1869,5 +1870,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
