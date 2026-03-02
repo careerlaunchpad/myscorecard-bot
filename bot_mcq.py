@@ -87,7 +87,7 @@ CREATE TABLE IF NOT EXISTS scores(
 conn.commit()
 
 # ================= PDF FONT (UNICODE SAFE) =================
-pdfmetrics.registerFont(UnicodeCIDFont("HeiseiMin-W3"))
+pdfmetrics.registerFont(UnicodeCIDFont("NotoSansDevanagari-Regular"))
 
 # ================= CORE HELPERS =================
 
@@ -1869,4 +1869,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
